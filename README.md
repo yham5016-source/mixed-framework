@@ -407,6 +407,10 @@ v0.1 should not build:
 - A second Discord frontend.
 - A general-purpose agent marketplace.
 
+## Active Plans
+
+- [OpenClaw Runtime Skill Evolution Implementation Plan](docs/superpowers/plans/2026-07-10-openclaw-runtime-skill-evolution.md)
+
 ## Risks
 
 | Risk | Mitigation |
