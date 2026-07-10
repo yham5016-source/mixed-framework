@@ -24,11 +24,20 @@ a delta on upstream instead of the module layout planned below:
     next-run skill loading (`src/skills/research/skill-evolution-loop.test.ts`)
   - Fix: `pendingSkillProposalNotice` registered in reserved session slot keys
     (caught by `tsgo:core`, which the first commit had not run)
-- **Blocked — Task 10 (Controlled Local Activation):** the installed gateway is
-  pinned at OpenClaw 2026.6.10, whose bundle contains none of the autocapture/
-  workshop surfaces. Live activation waits until a release containing this work
-  is adopted (or the pin decision is revisited). Do not run Task 10 against the
-  current install.
+- **Done — Task 10 (Controlled Local Activation), 2026-07-10:** the 2026.6.10
+  pin was lifted. #98416 (reply-session reentrancy dist bug) is verified fixed
+  in `2026.7.1-beta.2`, which also ships the autocapture/workshop skeleton, so
+  the gateway was upgraded to that version (config backed up, `doctor --fix`
+  migrations applied, unit metadata refreshed). `skills.workshop.autonomous.enabled=true`
+  is live. Full loop proven end to end on the running gateway: a durable
+  correction in a real `openclaw agent` run queued pending proposal
+  `github-pr-workflow`, `openclaw skills workshop apply` promoted it, and the
+  next run loaded the skill and quoted its content.
+  - **Operational gotcha:** enabling `skills.workshop.autonomous.enabled` via
+    `openclaw config set` claims "No gateway restart needed", but agent runs
+    kept the old value until the gateway was restarted. Restart after toggling.
+  - Per-agent `agents.allow/deny` scoping and proposal review notices are not
+    in beta.2; they arrive when PR #103817 is released.
 
 ---
 
