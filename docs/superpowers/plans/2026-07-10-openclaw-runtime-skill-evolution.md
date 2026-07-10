@@ -8,6 +8,28 @@
 
 **Tech Stack:** OpenClaw TypeScript runtime, Vitest, Skill Workshop, OpenClaw state DB, `agent_end` side effects, `openclaw config`, `openclaw doctor`.
 
+## Status (2026-07-10, post-implementation)
+
+Upstream `main` already contained most of Tasks 2–6 (signal extraction, dedup,
+caps, revision, suppression, curator, workshop CLI), so implementation landed as
+a delta on upstream instead of the module layout planned below:
+
+- **Done, in PR https://github.com/openclaw/openclaw/pull/103817** (branch
+  `codex/skill-evolution-loop` on fork `yham5016-source/openclaw-upstream`):
+  - `skills.workshop.autonomous.agents.allow/deny` per-agent policy
+  - One-shot pending-proposal review notice on the next interactive turn
+  - Doctor guardrails: unknown `allow` entry warning, all-agents-excluded warning
+    (adapted Task 7; the planned `agentAllowlist` key shipped as `agents.allow/deny`)
+  - End-to-end loop test: `agent_end` capture → pending proposal → apply →
+    next-run skill loading (`src/skills/research/skill-evolution-loop.test.ts`)
+  - Fix: `pendingSkillProposalNotice` registered in reserved session slot keys
+    (caught by `tsgo:core`, which the first commit had not run)
+- **Blocked — Task 10 (Controlled Local Activation):** the installed gateway is
+  pinned at OpenClaw 2026.6.10, whose bundle contains none of the autocapture/
+  workshop surfaces. Live activation waits until a release containing this work
+  is adopted (or the pin decision is revisited). Do not run Task 10 against the
+  current install.
+
 ---
 
 ## Current Finding
