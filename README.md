@@ -4,6 +4,10 @@ Status: v0.1 planning repository
 Date: 2026-07-10  
 Decision: mixed framework, single ingress
 
+## Current Notes
+
+- [LangGraph Head Reference Patterns](docs/2026-07-31-langgraph-head-reference-patterns.md) - reference systems and patterns to absorb into the OpenClaw Edge + LangGraph Head v0.1 plan.
+
 ## One-Line Decision
 
 Use OpenClaw as the only Discord and device-facing entry point, then route work to Codex, Hermes, Apify MCP, and other MCP-backed workers behind it.
