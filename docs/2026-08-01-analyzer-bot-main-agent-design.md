@@ -158,6 +158,18 @@ Inherited verbatim from README's Team Lead forbidden list, now applied to `analy
 
 Merging conversation and planning into one agent revives the risk README avoided by splitting them — *"Team Lead executes instead of plans."* The mitigation is that these restrictions are enforced by **OpenClaw tool profile plus PolicyGate**, not by prompt wording. A tool the Head must not use is not exposed to the Head's profile at all.
 
+## What PolicyGate Actually Is
+
+`PolicyGate`, used above and in v0.1 Scope, is not a class to build. It is a name for the composition of three primitives that already exist in OpenClaw — v0.1 wires them together, it does not add a fourth:
+
+| Component | What it gates | Where it lives |
+| --- | --- | --- |
+| `tools.profile` | Which tools an agent can call at all (`minimal` / `messaging` / `coding`, per-agent override) | `agents.list[].tools.profile`, `docs/cli/policy.md` |
+| Exec-approval flow | Shell/exec actions that need a human yes/no before running | `src/agents/bash-tools.exec-approval-request.ts`, `src/agents/bash-tools.exec-approval-followup.ts`, `extensions/discord/src/approval-runtime.ts` |
+| Sandbox tool policy | What a sandboxed session may touch, independent of tool profile | `docs/gateway/sandbox-vs-tool-policy-vs-elevated.md` |
+
+"OpenClaw tool profile plus PolicyGate" (§What The Head Never Does Directly) means: restrict `analyzer-bot`'s tool profile so the forbidden tools are absent, and route anything that reaches exec-approval or sandbox policy through those existing gates. No new gate object, no new config surface — this matches the repo's own bar for adding config (`AGENTS.md`: prove existing behavior can't solve it first).
+
 ## Relationship To Runtime Skill Evolution
 
 The [runtime skill evolution loop](superpowers/plans/2026-07-10-openclaw-runtime-skill-evolution.md) is already live on the gateway, so the interaction needs to be explicit:
@@ -165,6 +177,22 @@ The [runtime skill evolution loop](superpowers/plans/2026-07-10-openclaw-runtime
 - `analyzer-bot` is an allowed proposer under `skills.workshop.autonomous`. Proposals are always created as `pending`; nothing is written to a live `SKILL.md` without an explicit apply.
 - Worker sessions spawned by the graph fall into the subagent session class, which the loop excludes. Bots therefore cannot propose skills. That exclusion is intentional — skill evolution should learn from the conversation the user actually had, not from internal dispatch traffic.
 - Operational note carried forward: toggling `skills.workshop.autonomous.enabled` reports "no gateway restart needed", but agent runs keep the old value until the gateway is restarted. Restart after toggling.
+
+## Verified Spike
+
+A contract-and-ledger spike exists against real OpenClaw internals, parked on its own branch — not merged, not part of this repo's history:
+
+**[`openclaw-upstream@bf46d01`](https://github.com/yham5016-source/openclaw-upstream/commit/bf46d017ce0c999890e40ba50983c0b59fae4672)** (branch `head-transition-v01`)
+
+- `HeadTransitionInboundEvent` / `Decision` / `WorkerCommand` / `WorkerResult` / `DeliveryReceipt` contracts, typed and validated (`src/head-transition/contracts.ts`).
+- An append-only in-memory ledger with replay: invalid payloads fail before append, duplicate idempotency keys are harmless, replay rebuilds separate canonical maps per event kind (`src/head-transition/ledger.ts`).
+- A durable `SQLiteLedger` next to it (`src/head-transition/sqlite-ledger.ts`) — same append/replay contract, backed by a dedicated SQLite file via `node:sqlite` + Kysely, per `openclaw-upstream`'s no-JSON/JSONL-sidecar storage policy. The in-memory ledger is unchanged and still the default; this is a second option, not a replacement.
+- A Discord preflight-to-contract adapter that type-checks against the real `DiscordMessagePreflightContext` (`src/head-transition/discord-inbound-adapter.ts`) — not a hypothetical interface.
+- 31/31 tests passing as of this commit. The `SQLiteLedger` addition followed RED-first TDD (module-not-found failure confirmed before the implementation existed) plus a mutation-proof pass (flipped the duplicate-detection condition, confirmed 2 tests failed, reverted).
+
+This code does not implement the code in this repo — this repo stays docs-only. The link is the evidence trail from design to a fixed, runnable commit.
+
+**Still open:** which store is canonical — the dedicated `SQLiteLedger` file, the shared OpenClaw state DB, or a per-agent DB — is unresolved (see Open Questions below). The dedicated-file version exists so this decision doesn't block having a durable ledger at all.
 
 ## v0.1 Scope
 
@@ -176,7 +204,7 @@ Build:
 - Approval tokens with scope, expiry, one-time use, and cancel.
 - LangChain wrappers for the four bots.
 - `WorkerCommand` / `WorkerResult` typed schemas with version validation.
-- PolicyGate for external side effects.
+- PolicyGate wiring for external side effects — composing the three existing primitives (see [What PolicyGate Actually Is](#what-policygate-actually-is)), not a new class.
 - Strategy control skeleton — pre-registered attempt specs, three counters (`attempt_credit`, `same_failure_confirmations`, `strategy_switch_count`), multi-dimensional budgets, local and global stop, and raw `progress_claims` as the structured worker return with grades derived by rule. Specified in [Adaptive Strategy Controller](2026-08-02-adaptive-strategy-controller.md). This is Head-internal policy and state; it adds no agent, no standing reviewer chain, and no dynamic agent creation, so the non-scope list below still holds.
 
 Do not build (inherited from the 7/31 note):
@@ -225,13 +253,14 @@ make test-worker-timeout-cancel
 
 - Head model: keep GPT-5.5 as the primary reasoning candidate from the 7/31 note?
 - Per-bot model assignment: is GLM-5.2 the default worker model for all four, or per-bot?
-- Checkpoint store: reuse the OpenClaw state DB, or a separate ledger store?
+- Checkpoint store: the spike's dedicated `SQLiteLedger` file, the shared OpenClaw state DB, or a per-agent DB?
 - Does Tester split back out of `reviewer-bot` in v0.2, or stay merged?
 - When do Device Agent and Operator return as first-class roles?
 
 ## References
 
 - [Mixed Framework Orchestration Plan](../README.md)
+- [Verified spike commit](https://github.com/yham5016-source/openclaw-upstream/commit/bf46d017ce0c999890e40ba50983c0b59fae4672) — `openclaw-upstream@bf46d01`, branch `head-transition-v01`, contracts + in-memory ledger + SQLiteLedger + Discord adapter, 31/31 tests
 - [Adaptive Strategy Controller](2026-08-02-adaptive-strategy-controller.md) — how the Head decides when to stop, switch, suspend, and destroy a method
 - [LangGraph Head Reference Patterns](2026-07-31-langgraph-head-reference-patterns.md)
 - [OpenClaw Runtime Skill Evolution Implementation Plan](superpowers/plans/2026-07-10-openclaw-runtime-skill-evolution.md)
