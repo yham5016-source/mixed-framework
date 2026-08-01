@@ -6,11 +6,20 @@ Decision: mixed framework, single ingress
 
 ## Current Notes
 
+- [analyzer-bot Orchestration Contracts](docs/2026-08-01-analyzer-bot-orchestration-contracts.md) - **current v0.1 structure lock.** `analyzer-bot` is the sole judgment owner; `coder-bot`, `drafter-bot`, `reviewer-bot`, and `searcher-bot` are conditional workers. Supersedes the separate Team Lead Planner and the older worker naming below.
 - [LangGraph Head Reference Patterns](docs/2026-07-31-langgraph-head-reference-patterns.md) - reference systems and patterns to absorb into the OpenClaw Edge + LangGraph Head v0.1 plan.
 
 ## One-Line Decision
 
 Use OpenClaw as the only Discord and device-facing entry point, then route work to Codex, Hermes, Apify MCP, and other MCP-backed workers behind it.
+
+> **Superseded structure notice:** the agent roster and the separate Team Lead
+> Planner described in the sections below reflect the original v0.1 sketch. The
+> current structure merges conversation, planning, and judgment into a single
+> `analyzer-bot` Head with four conditional workers. Read
+> [analyzer-bot Orchestration Contracts](docs/2026-08-01-analyzer-bot-orchestration-contracts.md)
+> first; the material below remains useful for the Discord UX contract, dispatch
+> states, and phase plan, which are unchanged.
 
 ## Problem
 
