@@ -1,7 +1,9 @@
 # Analyzer-bot Main Agent Design
 
-Date: 2026-08-01  
-Status: v0.1 draft, awaiting review  
+Date: 2026-08-01
+
+Status: v0.1 draft, awaiting review
+
 Decision: single main agent (`analyzer-bot`) hosted on OpenClaw, orchestrating with LangGraph, calling LangChain-wrapped specialist bots
 
 > **Supersedes:** this document replaces the `Team Lead Planner` sections of [README.md](../README.md) — the separate planner agent described there (Core Architecture, Framework Split, Agent Contracts) is folded into `analyzer-bot`. README remains accurate for Discord ingress, worker boundaries, and dispatch states.

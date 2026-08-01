@@ -1,7 +1,9 @@
 # Mixed Framework Orchestration Plan
 
-Status: v0.1 planning repository  
-Date: 2026-07-10  
+Status: v0.1 planning repository
+
+Date: 2026-07-10
+
 Decision: mixed framework, single ingress
 
 ## Current Notes

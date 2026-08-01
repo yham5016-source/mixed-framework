@@ -1,7 +1,9 @@
 # LangGraph Head Reference Patterns
 
 Date: 2026-07-31
+
 Status: reference note
+
 Decision: absorb only the smallest useful patterns into the mixed framework plan
 
 ## One-Line Takeaway
