@@ -169,6 +169,19 @@ strategy_switch_count
 
 **Time is not a reset button.** `attempt_credit` does not decay with elapsed time inside a lineage. If it did, an overnight cron would wash off its record and return in the morning as a new person. A fresh lineage or a re-evaluation of accumulated credit requires an **explicit event** — new external evidence, an environment change, or user approval — the same event class that governs resumption in §10.
 
+**Nor is suspension.** A suspended method (§7) resuming with its credit zeroed would be the same laundering through a different door: spend to 2.9, suspend, resume, spend another 3.0. But carrying the full spend over unconditionally makes `suspended` a slower `destroyed` — a method resumed on genuinely new evidence with 0.1 credit left cannot be tried. So restoration is **scaled to what actually changed**:
+
+| Resume trigger | Credit effect |
+| --- | --- |
+| New external evidence at grade 1 or 2 bearing on the failure | Full restore, new lineage |
+| Environment change that removes the blocker — tool restored, permission granted, data arrived | Full restore, new lineage |
+| Explicit budget approval | Restore exactly the amount approved, same lineage |
+| Instruction to retry with nothing else changed | No restore; the remaining credit carries over |
+
+The evidence in the first row is graded by the §6 rules, not by the Head's assertion that it found something new. Grade 3 or 4 does not qualify — otherwise "I understand the problem better now" becomes a budget refill, which is the self-narration problem wearing yet another hat.
+
+The principle underneath: restoration matches what changed about the world. New evidence or a changed environment changes the board, so the budget resets. An approval changes only permission, so it grants only what was approved. Nothing changing restores nothing.
+
 **What makes an evidence path independent.** A confirmation counts toward `same_failure_confirmations` only if it ran along a different evidence path, not merely through a different agent. Calling a second component does not create independence. At least one of **data, tools, or evaluation criteria** must differ, and the same `failure_signature` must still appear. Two runs of the same worker over the same data with a different temperature are one confirmation, not two.
 
 ## 5. The Stop Rule
@@ -381,6 +394,7 @@ Returning raw claims rather than grades also resolves a tension with bounded con
 | Workers award themselves grades | Workers return raw `progress_claims`; grades are derived by rule |
 | Repeated representation changes evade the cap | Local credit resets, but `lineage_id` and `strategy_switch_count` do not |
 | Elapsed time launders an exhausted lineage | `attempt_credit` never decays with time; only explicit events open a new lineage (§4) |
+| Suspend-and-resume used to refill the budget | Restoration is scaled to the resume trigger, and the qualifying evidence must be grade 1 or 2 (§4) |
 | Weak differences pass as independent verification | Grade 2 needs one strong difference or two weak ones, not a raw axis count (§6) |
 | One budget applied to every kind of task | Budgets are per task class, and the class is recorded in the lineage (§9) |
 | Self-assessment scraps a viable method | Self-assessment produces reversible `suspend`; `destroy` needs hard failure |
@@ -398,7 +412,7 @@ What remains open is parameter and operating policy, not structure.
 - Whether `strategy_switch_count` is a fixed limit per task class or derived from the remaining budget.
 - Concrete schema for the `core_assumption_ids` registry — how an assumption is named, deduplicated, and retired.
 - Completing the strong/weak axis taxonomy in §6; the current table lists examples, not an exhaustive classification.
-- Whether a `suspended` method's accumulated credit is restored in full when it is resumed under a new lineage, or carried over.
+- Whether a partial budget approval can be granted repeatedly on the same suspended method, or only once before the method must be destroyed.
 
 ## References
 
