@@ -182,16 +182,17 @@ The [runtime skill evolution loop](superpowers/plans/2026-07-10-openclaw-runtime
 
 A contract-and-ledger spike exists against real OpenClaw internals, parked on its own branch — not merged, not part of this repo's history:
 
-**[`openclaw-upstream@381ff90`](https://github.com/yham5016-source/openclaw-upstream/commit/381ff90e6a9f5776578ceb1c63224c28f3c18278)** (branch `head-transition-v01`)
+**[`openclaw-upstream@bf46d01`](https://github.com/yham5016-source/openclaw-upstream/commit/bf46d017ce0c999890e40ba50983c0b59fae4672)** (branch `head-transition-v01`)
 
 - `HeadTransitionInboundEvent` / `Decision` / `WorkerCommand` / `WorkerResult` / `DeliveryReceipt` contracts, typed and validated (`src/head-transition/contracts.ts`).
-- An append-only ledger with replay: invalid payloads fail before append, duplicate idempotency keys are harmless, replay rebuilds separate canonical maps per event kind (`src/head-transition/ledger.ts`).
+- An append-only in-memory ledger with replay: invalid payloads fail before append, duplicate idempotency keys are harmless, replay rebuilds separate canonical maps per event kind (`src/head-transition/ledger.ts`).
+- A durable `SQLiteLedger` next to it (`src/head-transition/sqlite-ledger.ts`) — same append/replay contract, backed by a dedicated SQLite file via `node:sqlite` + Kysely, per `openclaw-upstream`'s no-JSON/JSONL-sidecar storage policy. The in-memory ledger is unchanged and still the default; this is a second option, not a replacement.
 - A Discord preflight-to-contract adapter that type-checks against the real `DiscordMessagePreflightContext` (`src/head-transition/discord-inbound-adapter.ts`) — not a hypothetical interface.
-- 20/20 tests passing as of this commit.
+- 31/31 tests passing as of this commit. The `SQLiteLedger` addition followed RED-first TDD (module-not-found failure confirmed before the implementation existed) plus a mutation-proof pass (flipped the duplicate-detection condition, confirmed 2 tests failed, reverted).
 
 This code does not implement the code in this repo — this repo stays docs-only. The link is the evidence trail from design to a fixed, runnable commit.
 
-**Known gap, not yet closed:** the ledger in that commit is in-memory only (`docs/architecture/langgraph-head-transition-v01.md` in that commit calls it "a contract spike, not the durable production store"). `openclaw-upstream`'s own `AGENTS.md` requires SQLite for all owned runtime state — no JSON/JSONL/checkpoint sidecar files. A `SQLiteLedger` alongside the existing in-memory one is the next step there, not yet done as of `381ff90`.
+**Still open:** which store is canonical — the dedicated `SQLiteLedger` file, the shared OpenClaw state DB, or a per-agent DB — is unresolved (see Open Questions below). The dedicated-file version exists so this decision doesn't block having a durable ledger at all.
 
 ## v0.1 Scope
 
@@ -252,14 +253,14 @@ make test-worker-timeout-cancel
 
 - Head model: keep GPT-5.5 as the primary reasoning candidate from the 7/31 note?
 - Per-bot model assignment: is GLM-5.2 the default worker model for all four, or per-bot?
-- Checkpoint store: reuse the OpenClaw state DB, or a separate ledger store?
+- Checkpoint store: the spike's dedicated `SQLiteLedger` file, the shared OpenClaw state DB, or a per-agent DB?
 - Does Tester split back out of `reviewer-bot` in v0.2, or stay merged?
 - When do Device Agent and Operator return as first-class roles?
 
 ## References
 
 - [Mixed Framework Orchestration Plan](../README.md)
-- [Verified spike commit](https://github.com/yham5016-source/openclaw-upstream/commit/381ff90e6a9f5776578ceb1c63224c28f3c18278) — `openclaw-upstream@381ff90`, branch `head-transition-v01`, contracts + ledger + Discord adapter, 20/20 tests
+- [Verified spike commit](https://github.com/yham5016-source/openclaw-upstream/commit/bf46d017ce0c999890e40ba50983c0b59fae4672) — `openclaw-upstream@bf46d01`, branch `head-transition-v01`, contracts + in-memory ledger + SQLiteLedger + Discord adapter, 31/31 tests
 - [Adaptive Strategy Controller](2026-08-02-adaptive-strategy-controller.md) — how the Head decides when to stop, switch, suspend, and destroy a method
 - [LangGraph Head Reference Patterns](2026-07-31-langgraph-head-reference-patterns.md)
 - [OpenClaw Runtime Skill Evolution Implementation Plan](superpowers/plans/2026-07-10-openclaw-runtime-skill-evolution.md)
