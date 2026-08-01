@@ -16,7 +16,7 @@ In v0.1 the Head does not evolve reasoning — it **controls** it, through pre-r
 
 ## Why This Document Exists
 
-This records the outcome of two review-and-rebuttal rounds on the Head's cognitive engine. Leaving that in chat would reproduce this repository's existing disease: decisions scattered across documents that later contradict each other.
+This records the outcome of the review-and-rebuttal rounds on the Head's cognitive engine — two rounds on the core design, followed by rulings on the open parameters. Leaving that in chat would reproduce this repository's existing disease: decisions scattered across documents that later contradict each other.
 
 **What the first review legitimately broke:** using the Archimedes anecdote as a record of cognition; accepting the Head's own narration as progress; conflating local and global stop; having no state path for hypotheses; drawing a capability ladder as if it were runtime architecture; calling the scheme "evolution" without specifying inheritance.
 
@@ -123,7 +123,7 @@ attempt_outcome:
 ```yaml
 evidence_policy:
   allowed_sources:        # which evidence origins count at all
-  independence_condition: # what makes two evidence paths independent (§5, §6)
+  independence_condition: # what makes two evidence paths independent (§4, §6)
   verification_method:    # how a claim is checked, not who checks it
   freshness_requirement:  # how old evidence may be before it is stale
   failure_determination:  # what counts as this method having failed
@@ -150,6 +150,8 @@ strategy_switch_count
   Global count of switches to a new method_family.
   A representation change also consumes this budget.
 ```
+
+**What makes an evidence path independent.** A confirmation counts toward `same_failure_confirmations` only if it ran along a different evidence path, not merely through a different agent. Calling a second component does not create independence. At least one of **data, tools, or evaluation criteria** must differ, and the same `failure_signature` must still appear. Two runs of the same worker over the same data with a different temperature are one confirmation, not two.
 
 **Credit per attempt**, derived from which `attempt_spec` fields changed — never assigned by the Head:
 
@@ -219,8 +221,6 @@ force_resume
 ```
 
 "Try once more" is an approval. `force_resume` requires something closer to *continue this method even without new evidence; override the stop rule for this one case.* Keeping them separate preserves the user's override while denying the Head a way to beg its way into an unbounded loop.
-
-**What makes an evidence path independent.** A confirmation counts toward `same_failure_confirmations` only if it ran along a different evidence path, not merely through a different agent. Calling a second component does not create independence. At least one of **data, tools, or evaluation criteria** must differ, and the same `failure_signature` must still appear. Two runs of the same worker over the same data with a different temperature are one confirmation, not two.
 
 ## 5. The Stop Rule
 
@@ -440,7 +440,6 @@ Returning raw claims rather than grades also resolves a tension with bounded con
 | Self-assessment scraps a viable method | Self-assessment produces reversible `suspend`; `destroy` needs hard failure |
 | Exhausted alternatives read as support | `reopened_for_exploration` carries no confidence increase |
 | Unattended runs wait forever | `stop_report` with explicit resume triggers; elapsed time is not one |
-| Cross-validation that is not actually independent | Grade 2 requires differing model family, context, tools, data, criteria, or sampling |
 | "Method" inflates into "research program" | `method_family` defines the tactical unit (§11) |
 | Human operator policy assumed to transfer to LLMs | Track C ablation (§13) |
 
