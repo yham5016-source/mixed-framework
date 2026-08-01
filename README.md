@@ -1,12 +1,16 @@
 # Mixed Framework Orchestration Plan
 
-Status: v0.1 planning repository  
-Date: 2026-07-10  
+Status: v0.1 planning repository
+
+Date: 2026-07-10
+
 Decision: mixed framework, single ingress
 
 ## Current Notes
 
 - [LangGraph Head Reference Patterns](docs/2026-07-31-langgraph-head-reference-patterns.md) - reference systems and patterns to absorb into the OpenClaw Edge + LangGraph Head v0.1 plan.
+- [Analyzer-bot Main Agent Design](docs/2026-08-01-analyzer-bot-main-agent-design.md) - settles the main agent question; supersedes the Team Lead Planner sections below.
+- [Adaptive Strategy Controller](docs/2026-08-02-adaptive-strategy-controller.md) - how the Head counts attempts, grades progress, and stops; the strategy-control skeleton inside analyzer-bot.
 
 ## One-Line Decision
 
