@@ -1,7 +1,9 @@
 # Adaptive Strategy Controller
 
-Date: 2026-08-02  
-Status: Proposed — accepted for v0.1 design; v0.2 items remain open  
+Date: 2026-08-02
+
+Status: Accepted for v0.1 design; parameter and operating-policy values remain experimental
+
 Decision: the Head controls reasoning in v0.1; it does not evolve it
 
 > **Naming discipline:** this is a *controller*, not an *engine* or an *evolution framework*. v0.1 has variation and selection but no inheritance, so `inheritance_record` is accumulated and not consumed. The name goes up to `Reasoning Evolution` when it is consumed, not before. See §8.
@@ -116,6 +118,19 @@ attempt_outcome:
 - Core fields are **controlled IDs and enums**, not free strings. `core_assumption_ids` references a registry; new entries are created deliberately and are visible.
 - `lineage_id` and `parent_method_id` are mandatory, so derivation stays on record even when labels drift.
 
+`evidence_policy_id` resolves to a policy record that must define, at minimum:
+
+```yaml
+evidence_policy:
+  allowed_sources:        # which evidence origins count at all
+  independence_condition: # what makes two evidence paths independent (§5, §6)
+  verification_method:    # how a claim is checked, not who checks it
+  freshness_requirement:  # how old evidence may be before it is stale
+  failure_determination:  # what counts as this method having failed
+```
+
+Without `failure_determination` fixed in advance, `failure_signature` in the outcome has nothing to be compared against, and the early-stop rule loses its anchor.
+
 Fully mechanical identity judgment remains impossible and unnecessary. Approximate classification is enough — an imprecise scale is still a scale.
 
 ## 4. Three Counters, Not One
@@ -129,7 +144,7 @@ attempt_credit
 
 same_failure_confirmations
   How many times the same failure_signature was reproduced
-  by independent evidence. 2 permits early stop.
+  along an independent evidence path. 2 permits early stop.
 
 strategy_switch_count
   Global count of switches to a new method_family.
@@ -146,9 +161,15 @@ strategy_switch_count
 | `representation` | new local method — local credit resets |
 | `core_assumption` | new method family |
 
+**These numbers are config defaults, not rules. Only their ordering carries meaning** — a variation that changes nothing but the prompt must cost less than one that changes the operator family. The specific values 0.2 / 0.5 / 0.8 are placeholders to be tuned against logs, and nothing in the design may depend on their exact magnitude.
+
 **When several fields change at once, apply only the highest single weight.** Summing over-counts easily; max is simple and predictable.
 
 **Closing the reset escape hatch.** A `representation` change resets the *local* credit counter. It does **not** reset `lineage_id` or refund `strategy_switch_count`. Without that rule, a model can rewrite the representation indefinitely and never reach any cap.
+
+**Time is not a reset button.** `attempt_credit` does not decay with elapsed time inside a lineage. If it did, an overnight cron would wash off its record and return in the morning as a new person. A fresh lineage or a re-evaluation of accumulated credit requires an **explicit event** — new external evidence, an environment change, or user approval — the same event class that governs resumption in §10.
+
+**What makes an evidence path independent.** A confirmation counts toward `same_failure_confirmations` only if it ran along a different evidence path, not merely through a different agent. Calling a second component does not create independence. At least one of **data, tools, or evaluation criteria** must differ, and the same `failure_signature` must still appear. Two runs of the same worker over the same data with a different temperature are one confirmation, not two.
 
 ## 5. The Stop Rule
 
@@ -193,7 +214,16 @@ Grades 1 and 2 stand alone. Grade 3 counts **only against a `preregistered_claim
 
 Requiring only externally measurable progress would be too strict — it produces a system that chases what is measurable and manufactures checkboxes. Product concepts, organizational design, problem definition, and research hypotheses without a test yet are real work. Grade 3 exists so that work is not amputated; the pre-registration requirement is what stops grade 3 from becoming a loophole.
 
-**Independence is a property, not a job title.** Calling a component `reviewer-bot` does not make it independent; the same base model over a similar context shares the same blind spots — self-review in a wig. A `verifier_ref` counts toward grade 2 only if some of these differ: model family, context, tools, data, evaluation criteria, sampling path. The criterion is **low error correlation**.
+**Independence is a property, not a job title.** Calling a component `reviewer-bot` does not make it independent; the same base model over a similar context shares the same blind spots — self-review in a wig. The criterion is **low error correlation**.
+
+Rather than fixing a count of differing axes, grade 2 requires **one strong difference or at least two weak ones**:
+
+| Strength | Axes |
+| --- | --- |
+| Strong | A genuinely different dataset, a different model family, a different tool chain |
+| Weak | Different context framing, different sampling parameters, different prompt phrasing |
+
+One entirely separate dataset is strong evidence of independence. Changing temperature twice is not — it produces two weak differences at best, and often none. Counting axes without weighting them would let the second kind masquerade as the first.
 
 ## 7. Two State Machines
 
@@ -229,6 +259,17 @@ Variation and selection without inheritance is not evolution; it is random resta
 No single utility score. Hard limits per dimension: tokens, wall-clock time, API cost, tool calls, user-facing latency, strategy switches.
 
 Real optimization routinely treats cost, time, risk, and quality as separate objectives without converting to one currency. Forcing a single score early has a specific failure mode here: the Head starts manufacturing the score.
+
+**Budgets are per task class, not global constants.** One set of numbers across every request is simultaneously extravagant for one class and starving for another:
+
+| Task class | Shape of the budget |
+| --- | --- |
+| Simple query | Tight on every dimension; a strategy switch is already suspicious |
+| Code change | Moderate compute, low strategy-switch allowance, high evidence requirement |
+| Investigation | High compute and strategy-switch allowance, long horizon |
+| High-risk action | Compute is not the binding constraint; evidence grade and approval are |
+
+The classifier that assigns a task class runs before the budget is allocated, and the class is recorded in the lineage so a run cannot quietly re-classify itself upward mid-flight.
 
 Accurate statement of where this stands: **resources and opportunity cost are defined; the utility function and allocation policy are not yet.**
 
@@ -319,7 +360,7 @@ Representational change as the core of insight is retained as a conclusion, with
 
 - `attempt_spec` frozen and hashed before execution; `attempt_outcome` appended after.
 - Three counters: `attempt_credit`, `same_failure_confirmations`, `strategy_switch_count`.
-- Multi-dimensional budgets.
+- Multi-dimensional budgets, profiled per task class.
 - Local stop, suspend by default.
 - Global stop with six reasons and a `stop_report`.
 - Structured worker return of **raw `progress_claims`**; grades computed by rule.
@@ -339,6 +380,9 @@ Returning raw claims rather than grades also resolves a tension with bounded con
 | Grade 4 progress reappears as grade 3 | Grade 3 requires a `preregistered_claim_id` |
 | Workers award themselves grades | Workers return raw `progress_claims`; grades are derived by rule |
 | Repeated representation changes evade the cap | Local credit resets, but `lineage_id` and `strategy_switch_count` do not |
+| Elapsed time launders an exhausted lineage | `attempt_credit` never decays with time; only explicit events open a new lineage (§4) |
+| Weak differences pass as independent verification | Grade 2 needs one strong difference or two weak ones, not a raw axis count (§6) |
+| One budget applied to every kind of task | Budgets are per task class, and the class is recorded in the lineage (§9) |
 | Self-assessment scraps a viable method | Self-assessment produces reversible `suspend`; `destroy` needs hard failure |
 | Exhausted alternatives read as support | `reopened_for_exploration` carries no confidence increase |
 | Unattended runs wait forever | `stop_report` with explicit resume triggers; elapsed time is not one |
@@ -348,12 +392,13 @@ Returning raw claims rather than grades also resolves a tension with bounded con
 
 ## Open Questions
 
-- The credits 0.2 / 0.5 / 0.8 and the 3.0 cap have no principled initial basis — they need log-based tuning.
-- What makes two failure confirmations "independent" enough to count toward the early stop.
-- Actual per-dimension numbers for the global budget, and whether `strategy_switch_count` is a fixed limit or budget-derived.
-- Concrete schema for `evidence_policy_id` and the `core_assumption_ids` registry.
-- How many axes must differ before a `verifier_ref` counts as grade 2.
-- Whether `attempt_credit` decays across a long session or only accumulates.
+What remains open is parameter and operating policy, not structure.
+
+- Actual per-dimension numbers for each task-class budget profile (§9), and how a task is classified in the first place.
+- Whether `strategy_switch_count` is a fixed limit per task class or derived from the remaining budget.
+- Concrete schema for the `core_assumption_ids` registry — how an assumption is named, deduplicated, and retired.
+- Completing the strong/weak axis taxonomy in §6; the current table lists examples, not an exhaustive classification.
+- Whether a `suspended` method's accumulated credit is restored in full when it is resumed under a new lineage, or carried over.
 
 ## References
 
