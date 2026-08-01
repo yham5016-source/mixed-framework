@@ -175,12 +175,50 @@ strategy_switch_count
 | --- | --- |
 | New external evidence at grade 1 or 2 bearing on the failure | Full restore, new lineage |
 | Environment change that removes the blocker — tool restored, permission granted, data arrived | Full restore, new lineage |
-| Explicit budget approval | Restore exactly the amount approved, same lineage |
+| Explicit budget approval | No restore; adds the approved delta, same lineage |
 | Instruction to retry with nothing else changed | No restore; the remaining credit carries over |
 
 The evidence in the first row is graded by the §6 rules, not by the Head's assertion that it found something new. Grade 3 or 4 does not qualify — otherwise "I understand the problem better now" becomes a budget refill, which is the self-narration problem wearing yet another hat.
 
-The principle underneath: restoration matches what changed about the world. New evidence or a changed environment changes the board, so the budget resets. An approval changes only permission, so it grants only what was approved. Nothing changing restores nothing.
+The principle underneath: **restoration is proportional to actual state change, not to judgment.**
+
+| What changed | Restoration |
+| --- | --- |
+| Grade 1 or 2 evidence — information about the world | Full |
+| Environment or tools — what is executable | Full |
+| User approval — permission and budget only | The approved delta |
+| Grade 3 or 4 — possibly only the model's interpretation | None |
+
+### Manual Extension
+
+An approval **adds a delta; it never resets the counter.** A method at 2.4 of 3.0 granted +0.5 does not return to 2.9 remaining — its total allowance becomes 3.5, it continues from 2.4, and only the 0.5 is newly spendable.
+
+```yaml
+manual_extension:
+  max_grants_per_suspension_episode: 1
+  max_cumulative_credit_per_method_lineage: configurable
+```
+
+One grant per suspension episode is not enough on its own, because a method could suspend, re-enter the same state, and claim a fresh episode. Hence the second limit, on the whole lineage. A **new suspension episode requires new grade 1 or 2 evidence or a real environment change** — cycling the state without anything changing does not open one.
+
+When the granted delta is spent and no new grade 1 or 2 evidence or environment change has appeared, the method returns to `suspended`, and **the system does not ask for another grant.** Head soliciting "just one more, please" on a loop is the slow version of the infinite retry button.
+
+**Exhausting an approval is not grounds for `destroyed`.** That a method failed even under extra budget the user authorized means it was unproductive, not refuted. Absent a hard failure, §2 still applies and the correct terminal state is `suspended`.
+
+### `force_resume`
+
+The user retains final authority, and that authority must be distinguishable from a routine grant:
+
+```text
+approval
+  Bounded additional credit, operating inside existing policy.
+
+force_resume
+  An explicit user policy exception. Separately audited,
+  consumes global budget, and never solicited by the system.
+```
+
+"Try once more" is an approval. `force_resume` requires something closer to *continue this method even without new evidence; override the stop rule for this one case.* Keeping them separate preserves the user's override while denying the Head a way to beg its way into an unbounded loop.
 
 **What makes an evidence path independent.** A confirmation counts toward `same_failure_confirmations` only if it ran along a different evidence path, not merely through a different agent. Calling a second component does not create independence. At least one of **data, tools, or evaluation criteria** must differ, and the same `failure_signature` must still appear. Two runs of the same worker over the same data with a different temperature are one confirmation, not two.
 
@@ -395,6 +433,8 @@ Returning raw claims rather than grades also resolves a tension with bounded con
 | Repeated representation changes evade the cap | Local credit resets, but `lineage_id` and `strategy_switch_count` do not |
 | Elapsed time launders an exhausted lineage | `attempt_credit` never decays with time; only explicit events open a new lineage (§4) |
 | Suspend-and-resume used to refill the budget | Restoration is scaled to the resume trigger, and the qualifying evidence must be grade 1 or 2 (§4) |
+| Repeated approvals become a slow infinite retry | One grant per suspension episode, a cumulative lineage cap, and the system never solicits another (§4) |
+| State cycled to fake a new suspension episode | A new episode requires grade 1 or 2 evidence or a real environment change (§4) |
 | Weak differences pass as independent verification | Grade 2 needs one strong difference or two weak ones, not a raw axis count (§6) |
 | One budget applied to every kind of task | Budgets are per task class, and the class is recorded in the lineage (§9) |
 | Self-assessment scraps a viable method | Self-assessment produces reversible `suspend`; `destroy` needs hard failure |
@@ -412,7 +452,7 @@ What remains open is parameter and operating policy, not structure.
 - Whether `strategy_switch_count` is a fixed limit per task class or derived from the remaining budget.
 - Concrete schema for the `core_assumption_ids` registry — how an assumption is named, deduplicated, and retired.
 - Completing the strong/weak axis taxonomy in §6; the current table lists examples, not an exhaustive classification.
-- Whether a partial budget approval can be granted repeatedly on the same suspended method, or only once before the method must be destroyed.
+- The value of `max_cumulative_credit_per_method_lineage` (§4). The rule is settled; the number waits on operating logs.
 
 ## References
 
