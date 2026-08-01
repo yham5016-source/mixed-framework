@@ -23,26 +23,32 @@ The current Discord agent experience feels unstable because planning, execution,
 The fix is not to replace everything at once. The fix is to make the boundary strong:
 
 - OpenClaw owns conversation ingress, Discord UX, and iPhone node access.
-- A separate Team Lead Planner owns planning, review, approval, rejection, and dispatch.
+- Planning, review, approval, rejection, and dispatch live inside `analyzer-bot`'s Head Orchestrator — not a separate Team Lead Planner agent. *(Updated 2026-08; see [Analyzer-bot Main Agent Design](docs/2026-08-01-analyzer-bot-main-agent-design.md).)*
 - Execution workers do coding, research, testing, review, device actions, and operations under explicit contracts.
 
 ## Core Architecture
 
+*Updated 2026-08 to match [Analyzer-bot Main Agent Design](docs/2026-08-01-analyzer-bot-main-agent-design.md) — the prior diagram had a separate `Team Lead Planner` and `Dispatch Broker / Queue`; both are folded into `analyzer-bot`'s Head Orchestrator, and LangGraph owns branching directly with no separate broker.*
+
 ```text
-Discord
-  -> OpenClaw Conversation Agent
-     -> Team Lead Planner
-        -> Dispatch Broker / Queue
-           -> Codex Coding Agent
-           -> Hermes Worker Pool
-           -> Apify Researcher
-           -> Critic / Reviewer
-           -> Tester
-           -> OpenClaw Device Agent
-           -> Operator
-        -> Team Lead Validation
-     -> OpenClaw Conversation Agent posts progress/final output
+Discord / device
+  -> OpenClaw edge (ingress, session, route, delivery, iPhone node)
+     -> analyzer-bot (OpenClaw agent profile)
+        -> Head Orchestrator
+           -> LangGraph
+              - state (checkpoint / ledger)
+              - branching
+              - call order
+              - retry / interrupt / resume
+              -> LangChain-wrapped specialist bots
+                 -> coder-bot
+                 -> drafter-bot
+                 -> reviewer-bot
+                 -> searcher-bot
+     -> OpenClaw edge posts progress/final output
 ```
+
+See the [worker mapping](docs/2026-08-01-analyzer-bot-main-agent-design.md#worker-mapping) for how the seven roles below fold into these four bots.
 
 ## Framework Split
 
@@ -50,7 +56,7 @@ Discord
 | --- | --- | --- | --- |
 | Discord ingress | OpenClaw | Receive Discord messages, show typing/status, render approval controls, maintain active session context | Deep planning, shell execution, Git writes, OAuth loops, worker orchestration |
 | Device bridge | OpenClaw | Keep iPhone node available for contacts, calendar, and native device actions | General research, coding, planning, autonomous writes without confirmation |
-| Planning | Team Lead Planner | Convert conversation into plans, reject weak plans, approve dispatch, review worker outputs | Direct code execution, direct API key use, direct Git push |
+| Planning | `analyzer-bot` Head Orchestrator *(was a separate Team Lead Planner; superseded)* | Convert conversation into plans, reject weak plans, approve dispatch, review worker outputs | Direct code execution, direct API key use, direct Git push |
 | Coding | Codex | Code changes, repo edits, TDD, verification, commits when authorized | Social scraping, broad research, iPhone mutation |
 | Worker pool | Hermes Agent | Durable background workers, summaries, planner-review, critic/research support using NVIDIA-backed profiles | Second Discord frontend, competing lead planner |
 | Research | Apify MCP + normal web search | Recover original sources, social/video evidence, GitHub/forum usage patterns | Expose all Actors, mutate repos, execute code |
@@ -76,7 +82,7 @@ Required behavior:
   - `/plan revise`
   - `/status`
   - `/handoff`
-- Produce a compact handoff envelope for the Team Lead Planner.
+- Produce a compact handoff envelope for `analyzer-bot`'s Head Orchestrator.
 
 Forbidden behavior:
 
@@ -86,6 +92,8 @@ Forbidden behavior:
 - No iPhone data mutation without routing through the Device Agent contract.
 
 ### Team Lead Planner
+
+> **Superseded:** this is not a separate agent. The required/forbidden behavior below is inherited verbatim by `analyzer-bot`'s Head Orchestrator — see [Analyzer-bot Main Agent Design](docs/2026-08-01-analyzer-bot-main-agent-design.md#what-the-head-never-does-directly). Kept here as the source list; only "separate agent" is wrong.
 
 Purpose: act as a strict plan-mode agent.
 
@@ -158,7 +166,7 @@ Boundary:
 
 - Hermes may run as a backend worker framework.
 - Hermes must not become a second Discord ingress unless OpenClaw is retired later.
-- Hermes tasks should be created from the Dispatch Broker, not from casual Discord messages.
+- Hermes tasks should be created from `analyzer-bot`'s Head Orchestrator (LangGraph), not from casual Discord messages.
 
 ### Apify Researcher
 
@@ -253,7 +261,7 @@ Minimum v0.1 behavior:
 
 ## Handoff Envelope
 
-Every route from OpenClaw Conversation Agent to Team Lead Planner should include:
+Every route from OpenClaw edge ingress to `analyzer-bot`'s Head Orchestrator should include:
 
 ```json
 {
@@ -274,13 +282,13 @@ Every route from OpenClaw Conversation Agent to Team Lead Planner should include
 | State | Meaning |
 | --- | --- |
 | `intent` | User request received, not yet planned |
-| `planning` | Team Lead Planner is drafting or revising a plan |
+| `planning` | `analyzer-bot`'s Head Orchestrator is drafting or revising a plan |
 | `waiting_approval` | User must approve, reject, or request revision |
 | `approved` | Plan accepted and ready to dispatch |
 | `dispatched` | Worker task has been assigned |
 | `worker_running` | Worker is active |
 | `worker_blocked` | Worker cannot proceed without input or external state |
-| `reviewing` | Team Lead is checking worker output |
+| `reviewing` | Head Orchestrator is checking worker output |
 | `needs_revision` | Output failed review or user rejected plan |
 | `complete` | Final answer posted with evidence |
 
@@ -323,20 +331,22 @@ Exit criteria:
 - A user can approve or reject without mentioning the bot repeatedly.
 - A stalled provider becomes a clear blocked/failed state.
 
-### Phase 2: Team Lead Plan-Only Mode
+### Phase 2: analyzer-bot Plan-Only Mode
 
-Outcome: the Team Lead cannot accidentally execute.
+> **Superseded:** was "Team Lead Plan-Only Mode", building a separate Team Lead Planner profile. Planning now lives inside `analyzer-bot`'s Head Orchestrator; steps below are updated to match.
 
-- Create Team Lead Planner profile.
-- Remove shell/Git/OAuth/device tools from the Team Lead profile.
+Outcome: `analyzer-bot`'s Head Orchestrator cannot accidentally execute.
+
+- Create the `analyzer-bot` OpenClaw agent profile.
+- Remove shell/Git/OAuth/device tools from the `analyzer-bot` profile — enforced by the OpenClaw tool profile and PolicyGate, not by prompt wording.
 - Allow only planning, review, dispatch, and status tools.
-- Enforce approval before dispatch.
+- Implement `waiting_approval` as a LangGraph interrupt; approval resumes the graph, rejection routes to `needs_revision`.
 - Add rejection path back to plan revision.
 
 Exit criteria:
 
-- Team Lead can produce and revise plans.
-- Team Lead cannot run shell commands.
+- `analyzer-bot` can produce and revise plans.
+- `analyzer-bot`'s profile cannot run shell commands.
 - No worker dispatch happens before approval.
 
 ### Phase 3: Worker Mapping
@@ -362,14 +372,14 @@ Outcome: Hermes can be used without competing with OpenClaw for Discord ingress.
 
 - Start Hermes only as a backend worker pool.
 - Connect NVIDIA API key to Hermes worker profile without logging the key.
-- Add dispatch route from Team Lead Planner to Hermes worker tasks.
+- Add dispatch route from `analyzer-bot`'s Head Orchestrator to Hermes worker tasks.
 - Use Hermes for background research, critique, synthesis, and planner-review.
 
 Exit criteria:
 
-- Hermes can receive a task from the Dispatch Broker.
+- Hermes can receive a task from the LangGraph graph (no separate Dispatch Broker).
 - Hermes does not listen directly to Discord in v0.1.
-- Results return to Team Lead validation before Discord output.
+- Results return to the Head Orchestrator for review before Discord output.
 
 ### Phase 5: Verification and Runbook
 
@@ -380,7 +390,7 @@ Outcome: the system is operable and debuggable.
   - Plan draft to approval wait state
   - Approval to worker dispatch
   - Worker blocked report
-  - Worker result to Team Lead review
+  - Worker result to Head Orchestrator review
   - Final answer to Discord
 - Add manual runbook:
   - restart OpenClaw
@@ -400,7 +410,7 @@ Exit criteria:
 v0.1 should build only these:
 
 - OpenClaw Discord UX status layer.
-- Team Lead plan-only profile.
+- `analyzer-bot` plan-only profile (Head Orchestrator).
 - Approval/rejection controls.
 - Dispatch envelope schema.
 - Static worker role/tool matrix.
@@ -424,11 +434,11 @@ v0.1 should not build:
 | Risk | Mitigation |
 | --- | --- |
 | Two frameworks compete for the same Discord channel | Keep OpenClaw as the only ingress in v0.1 |
-| Team Lead executes instead of plans | Remove execution tools from Team Lead profile |
+| `analyzer-bot`'s Head Orchestrator executes instead of plans | Tool exposure gating at the OpenClaw profile and PolicyGate, not prompt wording |
 | Tool selection explodes | Role-specific tool allowlists |
 | OAuth loops waste user time | Provider failures become blocked/failed state, not repeated prompts |
 | Research creates unverifiable claims | Normalize evidence and preserve provider execution status |
-| Workers self-report success falsely | Team Lead requires verification evidence before final |
+| Workers self-report success falsely | Head Orchestrator requires verification evidence before final |
 | Device data leaks into prompts | Device Agent requires explicit confirmation and minimal context sharing |
 
 ## References
