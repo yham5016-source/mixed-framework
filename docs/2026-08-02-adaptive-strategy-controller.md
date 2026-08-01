@@ -1,0 +1,366 @@
+# Adaptive Strategy Controller
+
+Date: 2026-08-02  
+Status: Proposed — accepted for v0.1 design; v0.2 items remain open  
+Decision: the Head controls reasoning in v0.1; it does not evolve it
+
+> **Naming discipline:** this is a *controller*, not an *engine* or an *evolution framework*. v0.1 has variation and selection but no inheritance, so `inheritance_record` is accumulated and not consumed. The name goes up to `Reasoning Evolution` when it is consumed, not before. See §8.
+>
+> **File dating convention:** documents are dated by authoring date. The discussion behind this one began 2026-08-01; it was written on 2026-08-02.
+
+## One-Line Decision
+
+In v0.1 the Head does not evolve reasoning — it **controls** it, through pre-registered attempt specifications, three separate counters, graded evidence, multi-dimensional budgets, and separate local and global stops.
+
+## Why This Document Exists
+
+This records the outcome of two review-and-rebuttal rounds on the Head's cognitive engine. Leaving that in chat would reproduce this repository's existing disease: decisions scattered across documents that later contradict each other.
+
+**What the first review legitimately broke:** using the Archimedes anecdote as a record of cognition; accepting the Head's own narration as progress; conflating local and global stop; having no state path for hypotheses; drawing a capability ladder as if it were runtime architecture; calling the scheme "evolution" without specifying inheritance.
+
+**What the rebuttal legitimately recovered:** extracting candidate operators from extreme success cases (candidate generation is a search step, not a causal claim, and search needs no control group — studying birds to build a wing does not require a control group of flightless animals); the value of the 2/3 heuristic (expected-information-gain stopping is computed by the same Head whose self-assessment is distrusted, making it *more* gameable, not less); the implementability of approximate same-method judgment; structural progress as a real category; Cognitive Economics without a single numeraire; Wiles and Kepler as a unit-of-application error rather than counterexamples; and that the control skeleton does not conflict with the analyzer-bot v0.1 scope.
+
+**Where the first review contradicted itself (retracted):** it attacked the circularity of the counting rule, then proposed replacing it with an expected-information-gain estimate that is more circular. It also flagged survivorship bias while asserting without evidence that problem selection and domain depth were "much more likely" the deciding factors.
+
+**What the second round fixed — four blockers that would have re-collided at implementation:**
+
+1. The cost basis for judgment asymmetry was wrong, and the method state machine was missing `suspended` (§2, §7).
+2. `failure_signature` cannot be frozen before execution, because failures happen after it (§3).
+3. Attempt weights and the 2/3 rule were counting different things through one counter, and a representation change reset the counter at no global cost — an escape hatch (§4, §5).
+4. Having workers return their own progress grade relocates self-narration rather than removing it (§6).
+
+Plus: `suspended` resurrection needed splitting, global stop needed more reasons than budget exhaustion, representation switching was over-prioritized, and the operator research needed a third track (§7, §10, §12, §13).
+
+## 1. Two Levels
+
+Architecture has exactly two levels:
+
+- **Object-level reasoning** — reasoning that solves the problem.
+- **Strategy-level control** — generation, selection, evaluation, termination.
+
+The four-rung ladder (`Prompt → Reasoning → Meta Reasoning → Reasoning Generator`) is **not** runtime layering. Generating a strategy and evaluating a strategy are both metacognitive acts at the same level. That ladder is a `capability progression` describing how a user's use of AI matures, and it does not appear in the architecture.
+
+## 2. Judgment Asymmetry — The Governing Principle
+
+Every judgment rule below inherits this.
+
+The asymmetry is **not** that stopping early is cheap. Discarding the only viable method is expensive. The asymmetry is about **boundedness and recoverability**:
+
+- An early stop can be made **recoverable** — the method is suspended, its record is kept, and it can be resumed.
+- An extension granted by self-approval has **no upper bound** — each extension can justify the next.
+
+Therefore:
+
+> Self-assessment may **reduce remaining budget or suspend the current method**. It may not increase budget or exceed a hard cap.
+>
+> A stop taken on self-assessment is by default a reversible `suspend`. Only a direct refutation or a reproduced hard failure permits an irreversible `destroy`.
+
+The Head gets the brake, not the authority to scrap a working engine on a hunch.
+
+This dissolves the circularity objection without pretending the judge is reliable. The counting rule is a regularizer bounding the damage of a roughly 70%-accurate judge, and the judge only ever moves the cap downward. An imperfect overcurrent sensor is why you also install a breaker.
+
+**Consequence for naming:** what the original "self-destruction principle" mostly produces is `suspended`, not `destroyed`. It is a stop rule with a rare destroy path, and §5 is written that way.
+
+## 3. Attempt Specification — Frozen Before, Recorded After
+
+The signature splits by time. What must be committed before execution and what can only exist after it are different objects.
+
+**Frozen before the attempt.** Canonically serialized, hashed, immutable:
+
+```yaml
+attempt_spec:
+  signature_schema_version:
+  attempt_id:
+  lineage_id:
+  parent_method_id:
+  hypothesis_id:
+
+  method_family:
+    representation:
+    core_assumption_ids:
+    operator_family_ids:
+    evidence_policy_id:
+
+  execution_variant:
+    prompt_template_id:
+    tool_profile_id:
+    sampling_profile_id:
+    data_subset_id:
+
+  success_criteria:
+  stop_criteria:
+  progress_claims:
+  local_budget:
+```
+
+**Recorded after the attempt.** Append-only; never edits the spec:
+
+```yaml
+attempt_outcome:
+  attempt_spec_hash:
+  tests_passed:
+  tests_failed:
+  counterexamples:
+  evidence_added:
+  resource_usage:
+
+  failure_signature:
+    violated_constraint:
+    failed_test:
+    failure_stage:
+    counterexample:
+```
+
+**What the hash does and does not buy.** It prevents post-hoc renaming — a method cannot be re-registered under a new name after seeing how it failed. It does **not** prevent false registration at the start; a model that wants to evade the counter can declare a misleading `core_assumption` from the beginning. Two mitigations:
+
+- Core fields are **controlled IDs and enums**, not free strings. `core_assumption_ids` references a registry; new entries are created deliberately and are visible.
+- `lineage_id` and `parent_method_id` are mandatory, so derivation stays on record even when labels drift.
+
+Fully mechanical identity judgment remains impossible and unnecessary. Approximate classification is enough — an imprecise scale is still a scale.
+
+## 4. Three Counters, Not One
+
+Attempt weight and the 2/3 rule count different things. Collapsing them into one counter is what made the earlier draft ambiguous about what "two" meant.
+
+```text
+attempt_credit
+  How much local compute the method has consumed.
+  Accumulates in fractions. Default hard cap 3.0.
+
+same_failure_confirmations
+  How many times the same failure_signature was reproduced
+  by independent evidence. 2 permits early stop.
+
+strategy_switch_count
+  Global count of switches to a new method_family.
+  A representation change also consumes this budget.
+```
+
+**Credit per attempt**, derived from which `attempt_spec` fields changed — never assigned by the Head:
+
+| Changed field | attempt_credit |
+| --- | --- |
+| `execution_variant` only | 0.2 |
+| `evidence_policy` | 0.5 |
+| `operator_family`, core assumption unchanged | 0.8 |
+| `representation` | new local method — local credit resets |
+| `core_assumption` | new method family |
+
+**When several fields change at once, apply only the highest single weight.** Summing over-counts easily; max is simple and predictable.
+
+**Closing the reset escape hatch.** A `representation` change resets the *local* credit counter. It does **not** reset `lineage_id` or refund `strategy_switch_count`. Without that rule, a model can rewrite the representation indefinitely and never reach any cap.
+
+## 5. The Stop Rule
+
+- Default hard cap: **`attempt_credit` 3.0**.
+- **Early stop at `same_failure_confirmations` = 2** — the same `method_family` produced the same `failure_signature` under two independent confirmations.
+- **Immediate stop at 1** when a structural contradiction is fully demonstrated in a single attempt.
+- **Exceeding the cap is not permitted on self-assessment alone** — it requires external evidence or explicit approval.
+
+A stop produces `suspended` by default. `destroyed` requires a hard failure (§7).
+
+2 and 3.0 are not claims of optimality. They are a conservative compute limit for an environment where self-assessment is distrusted, and they are an **initial prior to be tuned against logs** — an empirical heuristic not yet quantitatively validated, which is more accurate than saying they have "no basis."
+
+High-variance problems are not fixed by allowing another attempt. Three samples do not resolve what two could not; change the evaluation — batch it, aggregate it, reduce the variance.
+
+## 6. Progress Grades — Computed, Never Self-Awarded
+
+Not reaching the answer is not the same as making no progress. But neither the Head nor a worker may grade its own output.
+
+**Workers return raw evidence, not grades:**
+
+```yaml
+progress_claims:
+  - claim_id:
+    claim_type:
+    preregistered_claim_id:
+    before_value:
+    after_value:
+    evidence_refs:
+    verifier_refs:
+```
+
+**The grade is then derived by rule:**
+
+| Grade | Derivation rule |
+| --- | --- |
+| 1 Hard | Test results, counterexamples, or a change in the candidate registry are present |
+| 2 Cross-validated | A verifier result satisfying the independence condition is present |
+| 3 Structural | A pre-registered structural claim has its condition satisfied |
+| 4 Narrative | Everything else |
+
+Grades 1 and 2 stand alone. Grade 3 counts **only against a `preregistered_claim_id`** — the claim must have been written into `attempt_spec.progress_claims` before the attempt, in a form that could have failed. Dimension reduction needs `before_value` and `after_value` on the candidate count; contradiction resolution needs the contradiction named earlier; a predictive model needs the prediction recorded first. Anything described only afterward lands in grade 4. Grade 4 never counts on its own.
+
+Requiring only externally measurable progress would be too strict — it produces a system that chases what is measurable and manufactures checkboxes. Product concepts, organizational design, problem definition, and research hypotheses without a test yet are real work. Grade 3 exists so that work is not amputated; the pre-registration requirement is what stops grade 3 from becoming a loophole.
+
+**Independence is a property, not a job title.** Calling a component `reviewer-bot` does not make it independent; the same base model over a similar context shares the same blind spots — self-review in a wig. A `verifier_ref` counts toward grade 2 only if some of these differ: model family, context, tools, data, evaluation criteria, sampling path. The criterion is **low error correlation**.
+
+## 7. Two State Machines
+
+```text
+Method:      active → weakened → suspended
+                                   ↘ destroyed
+
+Hypothesis:  candidate → supported → weakened → suspended → active
+                                              ↘ falsified  ↘ reopened_for_exploration
+```
+
+**Methods.** Lack of progress sends a method to `suspended`, which is reversible and retains its record. Only a **hard failure** — a reproduced structural contradiction, or a demonstrated violation of the method's own premise — sends it to `destroyed`. This follows directly from §2: self-assessment gets the reversible action, evidence gets the irreversible one.
+
+**Hypotheses.** Failing to solve is not refuting. A hypothesis reaches `falsified` only on direct evidence: a reproducible counterexample, a core prediction failing, an incompatible observation, or failing a discriminating test defined in advance. When several methods fail under one hypothesis, it becomes `suspended`, not `falsified`.
+
+**Resurrection splits in two**, because the two paths carry different epistemic weight:
+
+| Trigger | Transition | Confidence effect |
+| --- | --- | --- |
+| New positive evidence | `suspended → active` | May be re-evaluated upward |
+| Alternative hypotheses exhausted | `suspended → reopened_for_exploration` | **No increase** |
+
+Alternatives failing does not support the survivor. `reopened_for_exploration` means it may be investigated again, not that it gained support.
+
+## 8. `inheritance_record` — Recorded In v0.1, Consumed In v0.2
+
+Variation and selection without inheritance is not evolution; it is random restart with pruning. On method suspension or destruction, preserve: the assumption that failed, constraints discovered, partial results that survive, paths not to walk again, and counterexamples the next method must explain.
+
+**v0.1 only accumulates this record.** It does not feed it into generating the next method. The day it does is the day the name goes up to `Reasoning Evolution`.
+
+## 9. Cognitive Cost — Multi-Dimensional Hard Limits
+
+No single utility score. Hard limits per dimension: tokens, wall-clock time, API cost, tool calls, user-facing latency, strategy switches.
+
+Real optimization routinely treats cost, time, risk, and quality as separate objectives without converting to one currency. Forcing a single score early has a specific failure mode here: the Head starts manufacturing the score.
+
+Accurate statement of where this stands: **resources and opportunity cost are defined; the utility function and allocation policy are not yet.**
+
+## 10. Local Stop vs Global Stop
+
+- **Local stop** — end this method. §5.
+- **Global stop** — end this problem.
+
+These are different questions. Local stopping alone reduces time inside one frame while *increasing* the number of frames tried; without a global stop, "thinking forever in one frame" becomes "cycling frames forever."
+
+**Global stop reasons** — budget exhaustion is only one of six:
+
+```text
+success stop      pre-defined acceptance criteria met
+budget stop       tokens, time, cost, tool calls, or strategy switches exhausted
+exhaustion stop   no executable method family remains
+blocked stop      permissions, tools, or external data unavailable
+safety stop       safety or policy constraint
+user stop         cancellation, or a request for the current best
+```
+
+**When no human is available** (cron, background, overnight), the default is stop and report, never wait:
+
+```yaml
+stop_report:
+  best_current_result:
+  confidence:
+  stop_reason:
+  exhausted_budget:
+  unresolved_questions:
+  suspended_methods:
+  evidence_needed_to_resume:
+  allowed_resume_triggers:
+  checkpoint_id:
+```
+
+**Elapsed time is not a resume trigger.** Resumption requires an explicit event — new evidence, a new instruction, budget approval, or an environment change. Preventing an infinite retry button must not produce an infinite wait button, and a timer-based resume is just a slower retry button.
+
+## 11. Unit Of Application
+
+The rule applies to **tactical units**: a specific prompt strategy, tool combination, proof path, analytical representation, or method for testing one causal hypothesis.
+
+It does not apply to research goals, the problem itself, or long-lived hypotheses. Sustaining a goal and destroying local methods are compatible — Wiles held one goal for seven years while changing proof paths continuously; Kepler held the Mars orbit problem while moving from circles to epicycles to an ellipse. Neither repeated one tactic three times.
+
+`method_family` holds this boundary. If it is loose, "method" quietly inflates into "research program" and the rule bites the wrong thing.
+
+## 12. Strategy Switching — Representation Is Conditionally First
+
+Representational change is powerful when the impasse *is* representational. It is not the right first move when the cause is missing data, a tool failure, insufficient permissions, bad input, high external variance, or a direct counterexample. Those call for fixing the input, not rebuilding the representation.
+
+The rule is therefore conditional:
+
+> Representation switching takes highest priority when the same failure repeats under the same representation **and** there is an indication that the current representation is unduly constraining the search space.
+
+For example: if the same contradiction recurs twice under a natural-language formulation, switch to a causal graph or a constraint formulation. Rebuilding the representation from the first failure onward just turns the Head into a remodeling contractor.
+
+Other switching axes — decomposition to integration, forward to backward, direct to analogical, internal to external verification, state to time-series, cause-hunting to counterexample-hunting, solving to redefining — are selected against the observed `failure_signature`, not by fixed rank.
+
+## 13. Cognitive Operator Research — Three Tracks
+
+The research unit is not `operator presence` but **`operator policy` and `composition`**: when an operator is invoked, in what order operators compose, how fast branches are pruned, what counts as a signal, what is preserved after failure.
+
+Decomposition, analogy, and thought experiment are used by novices and experts alike, so their presence has little discriminating power. A chess novice and a grandmaster both search; the difference is policy. This raises the unit of the research program rather than retiring it.
+
+**Track A — candidate discovery.** Extreme success cases and cognitive research. Legitimate for search; this document makes no causal claim, so no control group is required.
+
+**Track B — human process validation.** Sources with actual process data: think-aloud protocol studies, expert-novice problem representation research, protocol analysis. Invocation, pruning, and retention are recorded there. They are not recorded in memoirs and biographies — the chess analogy works precisely because game records exist.
+
+**Track C — agent transfer validation.** Required, because a human expert's policy is not guaranteed to transfer to an LLM: memory structure, search behavior, and error modes all differ. Ablation on frontier models:
+
+```text
+base model
+vs operator list only
+vs operator list + invocation policy
+vs invocation policy + stop rules
+vs invocation policy + stop rules + inheritance
+```
+
+Measured on: success rate, total tokens, wall-clock time, tool calls, repeated-failure rate, false confidence, early-stop error, recovery rate after a strategy switch, reproducibility.
+
+Without Track C, human cognition research stays a design source and never becomes a verified agent policy.
+
+Representational change as the core of insight is retained as a conclusion, with its basis moved from the Archimedes anecdote to the representational-change literature on insight problem solving. The anecdote's only source is Vitruvius, roughly two centuries after Archimedes — a literary construction, not a record of cognition. The conclusion survived; the evidence did not.
+
+## 14. v0.1 / v0.2 Split
+
+**v0.1 — Head-internal policy and state, no new agents:**
+
+- `attempt_spec` frozen and hashed before execution; `attempt_outcome` appended after.
+- Three counters: `attempt_credit`, `same_failure_confirmations`, `strategy_switch_count`.
+- Multi-dimensional budgets.
+- Local stop, suspend by default.
+- Global stop with six reasons and a `stop_report`.
+- Structured worker return of **raw `progress_claims`**; grades computed by rule.
+- `inheritance_record` accumulation.
+
+None of this creates a new agent, a standing reviewer/tester chain, or dynamic agent creation, so it does not conflict with the non-scope list in the [analyzer-bot design](2026-08-01-analyzer-bot-main-agent-design.md). And if the Head is the only judging entity, minimum budget and retry control belong in v0.1 regardless — without them the Head is not an orchestrator, it is an infinite retry button.
+
+Returning raw claims rather than grades also resolves a tension with bounded contracts: the Head derives the grade from typed return values instead of reading the worker's full context.
+
+**v0.2:** consuming `inheritance_record`; adaptive stopping thresholds tuned from logs; the operator policy library; evaluating expected-information-gain rules once there are logs to calibrate against; Track C ablation results feeding back into policy.
+
+## Risks
+
+| Risk | Mitigation |
+| --- | --- |
+| The Head manufactures its own signature labels | Frozen `attempt_spec` plus controlled IDs and mandatory lineage — the hash stops renaming, the registry stops invention |
+| Grade 4 progress reappears as grade 3 | Grade 3 requires a `preregistered_claim_id` |
+| Workers award themselves grades | Workers return raw `progress_claims`; grades are derived by rule |
+| Repeated representation changes evade the cap | Local credit resets, but `lineage_id` and `strategy_switch_count` do not |
+| Self-assessment scraps a viable method | Self-assessment produces reversible `suspend`; `destroy` needs hard failure |
+| Exhausted alternatives read as support | `reopened_for_exploration` carries no confidence increase |
+| Unattended runs wait forever | `stop_report` with explicit resume triggers; elapsed time is not one |
+| Cross-validation that is not actually independent | Grade 2 requires differing model family, context, tools, data, criteria, or sampling |
+| "Method" inflates into "research program" | `method_family` defines the tactical unit (§11) |
+| Human operator policy assumed to transfer to LLMs | Track C ablation (§13) |
+
+## Open Questions
+
+- The credits 0.2 / 0.5 / 0.8 and the 3.0 cap have no principled initial basis — they need log-based tuning.
+- What makes two failure confirmations "independent" enough to count toward the early stop.
+- Actual per-dimension numbers for the global budget, and whether `strategy_switch_count` is a fixed limit or budget-derived.
+- Concrete schema for `evidence_policy_id` and the `core_assumption_ids` registry.
+- How many axes must differ before a `verifier_ref` counts as grade 2.
+- Whether `attempt_credit` decays across a long session or only accumulates.
+
+## References
+
+- [Mixed Framework Orchestration Plan](../README.md)
+- [Analyzer-bot Main Agent Design](2026-08-01-analyzer-bot-main-agent-design.md)
+- [LangGraph Head Reference Patterns](2026-07-31-langgraph-head-reference-patterns.md)
+- [OpenClaw Runtime Skill Evolution Implementation Plan](superpowers/plans/2026-07-10-openclaw-runtime-skill-evolution.md)
+- Representational change theory of insight — the basis for §13's retained conclusion
+- Think-aloud protocol analysis and expert-novice problem representation studies — Track B source class
+- Vitruvius, *De architectura* IX — the actual and only source of the Archimedes anecdote, cited here as what it is

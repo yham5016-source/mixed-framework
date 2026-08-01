@@ -175,6 +175,7 @@ Build:
 - LangChain wrappers for the four bots.
 - `WorkerCommand` / `WorkerResult` typed schemas with version validation.
 - PolicyGate for external side effects.
+- Strategy control skeleton — pre-registered attempt specs, three counters (`attempt_credit`, `same_failure_confirmations`, `strategy_switch_count`), multi-dimensional budgets, local and global stop, and raw `progress_claims` as the structured worker return with grades derived by rule. Specified in [Adaptive Strategy Controller](2026-08-02-adaptive-strategy-controller.md). This is Head-internal policy and state; it adds no agent, no standing reviewer chain, and no dynamic agent creation, so the non-scope list below still holds.
 
 Do not build (inherited from the 7/31 note):
 
@@ -229,6 +230,7 @@ make test-worker-timeout-cancel
 ## References
 
 - [Mixed Framework Orchestration Plan](../README.md)
+- [Adaptive Strategy Controller](2026-08-02-adaptive-strategy-controller.md) — how the Head decides when to stop, switch, suspend, and destroy a method
 - [LangGraph Head Reference Patterns](2026-07-31-langgraph-head-reference-patterns.md)
 - [OpenClaw Runtime Skill Evolution Implementation Plan](superpowers/plans/2026-07-10-openclaw-runtime-skill-evolution.md)
 - LangGraph — state machine, interrupt, resume, checkpoint flow
