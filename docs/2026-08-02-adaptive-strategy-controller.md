@@ -151,7 +151,7 @@ strategy_switch_count
   A representation change also consumes this budget.
 ```
 
-**What makes an evidence path independent.** A confirmation counts toward `same_failure_confirmations` only if it ran along a different evidence path, not merely through a different agent. Calling a second component does not create independence. At least one of **data, tools, or evaluation criteria** must differ, and the same `failure_signature` must still appear. Two runs of the same worker over the same data with a different temperature are one confirmation, not two.
+**What makes an evidence path independent.** A confirmation counts toward `same_failure_confirmations` only if it ran along a different evidence path, not merely through a different agent. Calling a second component does not create independence. This uses the same fixed axis enum as §6's grade-2 independence rule — at least one strong axis (`source_lineage`, `data_partition`, `verification_method`, `toolchain`) or two weak axes (`model_provider`, `prompt_context`, `sampling_path`, `evaluator_instance`) must differ, and the same `failure_signature` must still appear. Two runs of the same worker over the same data with a different temperature are one confirmation, not two — that's a single weak axis (`sampling_path`).
 
 **Credit per attempt**, derived from which `attempt_spec` fields changed — never assigned by the Head:
 
@@ -258,23 +258,42 @@ progress_claims:
 | --- | --- |
 | 1 Hard | Test results, counterexamples, or a change in the candidate registry are present |
 | 2 Cross-validated | A verifier result satisfying the independence condition is present |
-| 3 Structural | A pre-registered structural claim has its condition satisfied |
+| 3 Structural | A pre-registered structural claim has its condition satisfied — **disabled in v0.1, see below** |
 | 4 Narrative | Everything else |
 
 Grades 1 and 2 stand alone. Grade 3 counts **only against a `preregistered_claim_id`** — the claim must have been written into `attempt_spec.progress_claims` before the attempt, in a form that could have failed. Dimension reduction needs `before_value` and `after_value` on the candidate count; contradiction resolution needs the contradiction named earlier; a predictive model needs the prediction recorded first. Anything described only afterward lands in grade 4. Grade 4 never counts on its own.
 
 Requiring only externally measurable progress would be too strict — it produces a system that chases what is measurable and manufactures checkboxes. Product concepts, organizational design, problem definition, and research hypotheses without a test yet are real work. Grade 3 exists so that work is not amputated; the pre-registration requirement is what stops grade 3 from becoming a loophole.
 
+**Grade 3 evaluation is disabled in v0.1.** `preregistered_claim_id` only resolves against a real registry — deduplicated, retired, immutable claim IDs — and that registry does not exist yet (§3's `core_assumption_ids` registry has the identical gap: "Concrete schema for the `core_assumption_ids` registry" is still an Open Question). Shipping the field without the registry behind it would let a claim look pre-registered while nothing verifies it actually was. Until the registry, immutable claim IDs, and a before/after verifier land (v0.2, §14):
+
+- Structural claims are still recorded, tagged `provisional`, and kept for later re-evaluation — this is not "grade 3 doesn't exist," it's "grade 3 doesn't count yet."
+- A `provisional` claim is never treated as grade 3 anywhere in this document. It does not satisfy a stop condition (§5), does not justify a budget or credit extension (§4), and does not count toward `same_failure_confirmations` or a resume trigger (§4, §10).
+- A `provisional` claim can still be promoted later, but only by separately clearing grade 1 or 2 (test evidence or a cross-validated verifier) — never by v0.2 registry backfill relabeling old claims wholesale.
+
 **Independence is a property, not a job title.** Calling a component `reviewer-bot` does not make it independent; the same base model over a similar context shares the same blind spots — self-review in a wig. The criterion is **low error correlation**.
 
-Rather than fixing a count of differing axes, grade 2 requires **one strong difference or at least two weak ones**:
+Rather than fixing a count of differing axes, grade 2 requires **one strong difference or at least two weak ones**, drawn from a fixed axis list rather than free description — a Head that can describe its own difference as "strong" can talk its way past the rule:
 
-| Strength | Axes |
+| Strength | Axes (fixed enum) |
 | --- | --- |
-| Strong | A genuinely different dataset, a different model family, a different tool chain |
-| Weak | Different context framing, different sampling parameters, different prompt phrasing |
+| Strong | `source_lineage`, `data_partition`, `verification_method`, `toolchain` |
+| Weak | `model_provider`, `prompt_context`, `sampling_path`, `evaluator_instance` |
 
-One entirely separate dataset is strong evidence of independence. Changing temperature twice is not — it produces two weak differences at best, and often none. Counting axes without weighting them would let the second kind masquerade as the first.
+**`source_lineage` counts only for genuinely separate upstream sources.** Two evidence paths that both trace back to the same upstream artifact do not get credited as a `source_lineage` difference just because something downstream of it differs — otherwise a single flawed input could pass as two independent confirmations.
+
+Worked examples:
+
+| Situation | Axes | Verdict |
+| --- | --- | --- |
+| Same document, different model | 1 weak (`model_provider`) | Insufficient |
+| Same source material, different model + different prompt context | 2 weak (`model_provider`, `prompt_context`) | Conditionally sufficient |
+| Genuinely separate upstream sources | 1 strong (`source_lineage`) | Sufficient |
+| Same code, different test methods | 1 strong (`verification_method`) | Sufficient |
+
+The point of the enum is not the axis count — it's whether the difference actually lowers the odds that both paths share the same error. The fixed list is a v0.1 approximation of that; it doesn't replace the underlying question, it makes the underlying question checkable without trusting the Head's own description of "how different" something is.
+
+Changing temperature twice is not independence — it produces two weak differences at best (both `sampling_path`), and often none. Counting axes without weighting and without a fixed enum would let the second kind masquerade as the first.
 
 ## 7. Two State Machines
 
@@ -415,27 +434,31 @@ Representational change as the core of insight is retained as a conclusion, with
 - Local stop, suspend by default.
 - Global stop with six reasons and a `stop_report`.
 - Structured worker return of **raw `progress_claims`**; grades computed by rule.
+- Grade 1, 2, and 4 active; **Grade 3 (structural) evaluation gated off** — claims recorded as `provisional` only, no registry-backed pre-registration exists yet (§6).
+- Fixed independence axis enum (strong: `source_lineage`/`data_partition`/`verification_method`/`toolchain`; weak: `model_provider`/`prompt_context`/`sampling_path`/`evaluator_instance`) governing both grade-2 verification and `same_failure_confirmations` (§4, §6).
 - `inheritance_record` accumulation.
 
 None of this creates a new agent, a standing reviewer/tester chain, or dynamic agent creation, so it does not conflict with the non-scope list in the [analyzer-bot design](2026-08-01-analyzer-bot-main-agent-design.md). And if the Head is the only judging entity, minimum budget and retry control belong in v0.1 regardless — without them the Head is not an orchestrator, it is an infinite retry button.
 
 Returning raw claims rather than grades also resolves a tension with bounded contracts: the Head derives the grade from typed return values instead of reading the worker's full context.
 
-**v0.2:** consuming `inheritance_record`; adaptive stopping thresholds tuned from logs; the operator policy library; evaluating expected-information-gain rules once there are logs to calibrate against; Track C ablation results feeding back into policy.
+**v0.2:** activating Grade 3 evaluation — requires the `preregistered_claim_id` registry, immutable claim IDs, and a before/after verifier, none of which ship in v0.1 (§6); consuming `inheritance_record`; adaptive stopping thresholds tuned from logs; the operator policy library; evaluating expected-information-gain rules once there are logs to calibrate against; Track C ablation results feeding back into policy.
 
 ## Risks
 
 | Risk | Mitigation |
 | --- | --- |
 | The Head manufactures its own signature labels | Frozen `attempt_spec` plus controlled IDs and mandatory lineage — the hash stops renaming, the registry stops invention |
-| Grade 4 progress reappears as grade 3 | Grade 3 requires a `preregistered_claim_id` |
+| Grade 4 progress reappears as grade 3 | Grade 3 evaluation is disabled in v0.1 entirely — structural claims are recorded `provisional` and never counted, not gated by a field that could be spoofed |
+| Worker returns a `generic_result` payload to dodge typed-schema evidence requirements | ASC treats every `generic` result as `blocked`/`partial` regardless of claimed status; never counts as progress, never justifies budget/credit extension (Caveman doc, "Worker Message Contract") |
 | Workers award themselves grades | Workers return raw `progress_claims`; grades are derived by rule |
 | Repeated representation changes evade the cap | Local credit resets, but `lineage_id` and `strategy_switch_count` do not |
 | Elapsed time launders an exhausted lineage | `attempt_credit` never decays with time; only explicit events open a new lineage (§4) |
 | Suspend-and-resume used to refill the budget | Restoration is scaled to the resume trigger, and the qualifying evidence must be grade 1 or 2 (§4) |
 | Repeated approvals become a slow infinite retry | One grant per suspension episode, a cumulative lineage cap, and the system never solicits another (§4) |
 | State cycled to fake a new suspension episode | A new episode requires grade 1 or 2 evidence or a real environment change (§4) |
-| Weak differences pass as independent verification | Grade 2 needs one strong difference or two weak ones, not a raw axis count (§6) |
+| Weak differences pass as independent verification | Grade 2 needs one strong difference or two weak ones from a fixed axis enum, not a freely-described raw axis count (§6) |
+| Same upstream source double-counted as two independent `source_lineage` paths | `source_lineage` credit requires genuinely separate upstream sources, not just divergence downstream of a shared one (§6) |
 | One budget applied to every kind of task | Budgets are per task class, and the class is recorded in the lineage (§9) |
 | Self-assessment scraps a viable method | Self-assessment produces reversible `suspend`; `destroy` needs hard failure |
 | Exhausted alternatives read as support | `reopened_for_exploration` carries no confidence increase |
@@ -449,8 +472,8 @@ What remains open is parameter and operating policy, not structure.
 
 - Actual per-dimension numbers for each task-class budget profile (§9), and how a task is classified in the first place.
 - Whether `strategy_switch_count` is a fixed limit per task class or derived from the remaining budget.
-- Concrete schema for the `core_assumption_ids` registry — how an assumption is named, deduplicated, and retired.
-- Completing the strong/weak axis taxonomy in §6; the current table lists examples, not an exhaustive classification.
+- Concrete schema for the `core_assumption_ids` registry — how an assumption is named, deduplicated, and retired. Same open item blocks the `preregistered_claim_id` registry that Grade 3 needs (§6).
+- Whether the §6 strong/weak axis enum (now fixed: `source_lineage`/`data_partition`/`verification_method`/`toolchain` vs `model_provider`/`prompt_context`/`sampling_path`/`evaluator_instance`) needs more axes once real operating logs show independence failures the current eight don't cover. The list is fixed to close the free-description loophole, not because it's assumed complete.
 - The value of `max_cumulative_credit_per_method_lineage` (§4). The rule is settled; the number waits on operating logs.
 
 ## References
