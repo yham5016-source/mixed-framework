@@ -123,7 +123,7 @@ Each worker is `model + tools + rules`, wrapped by LangChain into a uniform call
 - For v0.1 it also owns test verification (FAIL_TO_PASS, PASS_TO_PASS, mutation proof).
 - Must not: implement feature code.
 
-**Risk-tiered input scope.** Same JSON contract everywhere is how a Head mis-compression survives review — the reviewer just re-checks the compiled artifact against itself. What the reviewer sees scales with how hard the decision is to undo:
+**Risk-tiered input scope.** Same JSON contract everywhere is how a Head mis-compression survives review — the reviewer just re-checks the compiled artifact against itself. What the reviewer sees scales with how hard the decision is to undo. **Tiers are cumulative** — each row adds to the rows above it, so the worker result and evaluation criteria are in scope at every tier; the high tier adds intent comparison on top of result review, it does not replace it:
 
 | Tier | Example | Reviewer input |
 | --- | --- | --- |
@@ -191,16 +191,22 @@ Bare typed envelopes (`{ status, body: string }`) fix the wrapper but not the pr
 ```ts
 interface CavemanEnvelope<TPayload> {
   schema: string;
-  schemaVersion: string;
+  schemaVersion: number;
+  messageId: string;
   taskId: string;
-  producer: string;
+  lineageId: string;
+  attemptId: string;
+  producer: AgentRole;
   status: "ok" | "partial" | "failed" | "blocked" | "cancelled";
   payload: TPayload;
   evidenceRefs: string[];
+  artifactRefs: string[];
   exceptions: ContractException[];
   resourceUsage: ResourceUsage;
 }
 ```
+
+`lineageId` and `attemptId` bind every worker result to the ASC's lineage and attempt records mechanically — there is no judgment step where the Head assigns a result to a lineage after the fact. `exceptions` stays an array: one result may legitimately carry `schema_mismatch` and `novel_observation` together. *(Envelope fields upgraded per the [master plan](architecture/head-orchestrator-v01-master-plan.md) §9.1.)*
 
 ### Per-task payload, not one free-text field
 
@@ -289,6 +295,8 @@ A contract-and-ledger spike exists against real OpenClaw internals, parked on it
 - 31/31 tests passing as of this commit. The `SQLiteLedger` addition followed RED-first TDD (module-not-found failure confirmed before the implementation existed) plus a mutation-proof pass (flipped the duplicate-detection condition, confirmed 2 tests failed, reverted).
 
 This code does not implement the code in this repo — this repo stays docs-only. The link is the evidence trail from design to a fixed, runnable commit.
+
+**Spike disposition (master plan §21):** the spike branch sits on a stale upstream base and is **not** the implementation branch. Implementation starts from a clean clone of the latest upstream `main`; the spike's nine files are ported selectively onto current APIs, and the spike branch is preserved as donor/reference only.
 
 **Canonical checkpoint DB — resolved.** A dedicated file, derived from OpenClaw's own `agentDir`, not hardcoded: `${agentDir}/analyzer-state.sqlite`. At current placement (`~/.openclaw/agents/analyzer/agent/`, confirmed against the live gateway — `~/.openclaw/agents/main/agent/openclaw-agent.sqlite` already exists there for `main`; the real layout has no top-level `data/` directory) that resolves to `~/.openclaw/agents/analyzer/agent/analyzer-state.sqlite`. The existing per-agent `openclaw-agent.sqlite` in that same directory is untouched — this is a second, dedicated file beside it, justified per `AGENTS.md`'s storage hierarchy (shared state DB → per-agent DB → dedicated SQLite "only when schema, volume, or lifecycle clearly does not fit those stores"): decoupling from OpenClaw's generated Kysely schema, a clean backup/delete/migration boundary, and a `StateStore` interface that can later point at the per-agent DB instead without touching call sites.
 

@@ -113,6 +113,12 @@ attempt_outcome:
     failed_test:
     failure_stage:
     counterexample:
+    execution:            # optional — code/execution tasks (master plan §15.4)
+      command:
+      stage:
+      error_code:
+      error_message:
+      environment:
 ```
 
 **What the hash does and does not buy.** It prevents post-hoc renaming — a method cannot be re-registered under a new name after seeing how it failed. It does **not** prevent false registration at the start; a model that wants to evade the counter can declare a misleading `core_assumption` from the beginning. Two mitigations:
@@ -391,14 +397,19 @@ Changing temperature twice is not independence — it produces two weak differen
 ## 7. Two State Machines
 
 ```text
-Method:      active → weakened → suspended → active   (resume, §4 triggers only)
-                                   ↘ destroyed
+Method:      proposed → active → succeeded
+             active → suspended → active     (resume, §4 triggers only)
+             active → blocked → active       (blocker removed)
+             suspended → destroyed           (hard failure only)
+             blocked → destroyed             (permanent invalidation only)
 
 Hypothesis:  candidate → supported → weakened → suspended → active
                                               ↘ falsified  ↘ reopened_for_exploration
 ```
 
-**Methods.** Lack of progress sends a method to `suspended`, which is reversible and retains its record. The `suspended → active` transition exists and is governed entirely by §4's restoration table — grade 1/2 evidence, environment change, approval, or `force_resume`; nothing else re-activates a suspended method, and elapsed time in particular does not (§10). Only a **hard failure** — a reproduced structural contradiction, or a demonstrated violation of the method's own premise — sends it to `destroyed`. This follows directly from §2: self-assessment gets the reversible action, evidence gets the irreversible one.
+*(Amended per the [master plan](architecture/head-orchestrator-v01-master-plan.md) §15.1: `proposed`, `succeeded`, and `blocked` added; the earlier `weakened` state removed — no rule ever referenced it. The hypothesis machine keeps its own `weakened`, which does carry rules.)*
+
+**Methods.** `proposed` is registration before activation — the `attempt_spec` freezes when the Head activates. `succeeded` is the terminal state when completion criteria are satisfied (the method-level analog of §10's success stop). `blocked` is involuntary suspension on a missing external dependency or permission; `blocked → active` requires only the blocker's removal, which is the same event as §4's "environment change" restore trigger — no grade 1/2 evidence needed, because nothing about the method's merit was ever in question. Lack of progress sends a method to `suspended`, which is reversible and retains its record. The `suspended → active` transition is governed entirely by §4's restoration table — grade 1/2 evidence, environment change, approval, or `force_resume`; nothing else re-activates a suspended method, and elapsed time in particular does not (§10). Only a **hard failure** — a reproduced structural contradiction, or a demonstrated violation of the method's own premise — sends it to `destroyed`. This follows directly from §2: self-assessment gets the reversible action, evidence gets the irreversible one.
 
 **Hypotheses.** Failing to solve is not refuting. A hypothesis reaches `falsified` only on direct evidence: a reproducible counterexample, a core prediction failing, an incompatible observation, or failing a discriminating test defined in advance. When several methods fail under one hypothesis, it becomes `suspended`, not `falsified`.
 
