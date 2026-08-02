@@ -10,7 +10,7 @@ Decision: single main agent (`analyzer-bot`) hosted on OpenClaw, orchestrating w
 
 ## One-Line Decision
 
-`analyzer-bot` is the single main agent attached to OpenClaw; its internal Head Orchestrator owns state and call order through LangGraph, and invokes coder / drafter / reviewer / searcher bots as LangChain-standardized components.
+`analyzer-bot` is the single main agent attached to OpenClaw; its internal Head Orchestrator owns state and call order through LangGraph, and invokes five LangChain-standardized workers — `gpt-analyzer`, `gemini-investigator`, `deepseek-drafter`, `glm-coder`, `claude-reviewer` (roles and model routes fixed in [Head Role and Model Routing v0.1](architecture/head-role-model-routing-v01.md)).
 
 ## Why This Document Exists
 
@@ -36,11 +36,12 @@ OpenClaw edge  (Discord ingress, session, route, delivery, iPhone node)
               ├─ 작업 분기
               ├─ 호출 순서
               ├─ 재시도 · 중단 · 재개 (interrupt / resume)
-              └─ LangChain으로 규격화된 전문 봇
-                  ├─ coder-bot
-                  ├─ drafter-bot
-                  ├─ reviewer-bot
-                  └─ searcher-bot
+              └─ LangChain으로 규격화된 전문 워커
+                  ├─ gpt-analyzer
+                  ├─ gemini-investigator
+                  ├─ deepseek-drafter
+                  ├─ glm-coder
+                  └─ claude-reviewer
 ```
 
 `analyzer-bot` is not a new identity. It already exists as an OpenClaw agent id — the runtime skill evolution work uses `agentId: "analyzer"`, session keys of the form `agent:analyzer:discord:chan-1`, and an autonomous allowlist of `["main", "analyzer"]`. This design promotes that existing agent to main-agent status rather than introducing a parallel one.
@@ -77,37 +78,45 @@ Item-by-item ruling so no implementer has to ask which document wins.
 
 ## Worker Mapping
 
-The seven workers in README fold into four bots. This is a mapping, not a deletion — every README role has a destination.
+The seven workers in README fold into five workers. This is a mapping, not a deletion — every README role has a destination. Agent ids and model routes are fixed in [Head Role and Model Routing v0.1](architecture/head-role-model-routing-v01.md); the earlier role names (`coder-bot`, `searcher-bot`, `reviewer-bot`, `drafter-bot`) are retained below as contract-section names for continuity.
 
 | README worker | v0.1 destination |
 | --- | --- |
-| Codex Coding Agent | `coder-bot` |
-| Apify Researcher + normal web search | `searcher-bot` |
-| Critic / Ponytail Review | `reviewer-bot` |
-| Tester | absorbed into `reviewer-bot`'s counterexample checking (v0.1 only) |
-| Hermes Worker Pool | not a bot role — an execution backend option behind a node |
+| Codex Coding Agent | `glm-coder` (contract: `coder-bot`) |
+| Apify Researcher + normal web search | `gemini-investigator` (contract: `searcher-bot`) |
+| Critic / Ponytail Review | `claude-reviewer` (contract: `reviewer-bot`) |
+| Tester | absorbed into `claude-reviewer`'s counterexample checking (v0.1 only) |
+| Hermes Worker Pool | not a worker role — an execution backend option behind a node |
 | Device Agent | OpenClaw edge capability behind PolicyGate, not a LangGraph node |
 | Operator | out of v0.1 scope; human runbook |
-| — | `drafter-bot` is new; README had no equivalent |
+| — | `deepseek-drafter` (contract: `drafter-bot`) is new; README had no equivalent |
+| — | `gpt-analyzer` is new; structural analysis, scoring, and synthesis offload — advisory only, never a verifier for the Head (routing doc §2.2) |
 
 ## Bot Contracts
 
-Each bot is `model + tools + rules`, wrapped by LangChain into a uniform callable.
+Each worker is `model + tools + rules`, wrapped by LangChain into a uniform callable. Section names keep the original role names; the v0.1 agent ids, model routes, per-role authority, and tool profiles are fixed in [Head Role and Model Routing v0.1](architecture/head-role-model-routing-v01.md).
 
-### `coder-bot`
+### `gpt-analyzer` (new in the routing design)
+
+- Analysis model + no external tools + structural-reasoning prompt.
+- Decomposes complex requests, extracts constraints, generates candidate paths and evaluation criteria, scores and synthesizes worker results for the Head.
+- Its scores are **advisory signals**, never progress grades, and it is never an independent verifier for the Head — it shares the leader's model route (routing doc §2.2, ASC §6 role-level corollary).
+- Must not: converse with the user, dispatch workers, change budgets or task class, execute anything.
+
+### `coder-bot` → `glm-coder`
 
 - Coding model + code tools + dedicated prompt.
 - Evidence rules inherited from README: RED before GREEN, mutation proof, PASS_TO_PASS, exact command output for completion claims, clean git status before final claim.
 - Must not: negotiate plans with the user, run broad scraping, touch device data.
 
-### `searcher-bot`
+### `searcher-bot` → `gemini-investigator`
 
 - Search model + search tools + source-return rules.
 - Normal search first; escalate to Apify MCP only when the original source is missing, a social URL is detected, or evidence is weak. Actor allowlist stays as in README.
 - Must distinguish `preview`, `blocked`, `failed`, `no_results`, and `executed`. Never report "searched, no result" when the provider was unavailable.
 - Must not: edit code or mutate repositories.
 
-### `reviewer-bot`
+### `reviewer-bot` → `claude-reviewer`
 
 - Review model + evaluation criteria + counterexample checking.
 - Leads with bugs, risks, regressions, and missing tests, with file and line references. Runs over-engineering pressure separately from correctness review.
@@ -124,10 +133,11 @@ Each bot is `model + tools + rules`, wrapped by LangChain into a uniform callabl
 
 The independent intent digest (high tier only) is produced by the `llm-task` tool (`docs/tools/llm-task.md`) — a single JSON-only, no-tools LLM call, not a new agent or a standing reviewer chain, so this stays inside the 7/31 note's non-scope list. Its input is **only** the original user request plus a fixed intent-extraction schema and the minimum original context needed; it must **never** receive the Head's contract, the Head's own intent summary, or the Head's conclusion. Feeding it the Head's compiled output turns "independent re-derivation" into "restate the Head's summary more confidently" — a different model calling the same compressed input is not independence. Configure a distinct model for these calls (`llm-task`'s per-call `model`/`allowedModels`) so the digest doesn't share the Head's specific failure modes.
 
-### `drafter-bot`
+### `drafter-bot` → `deepseek-drafter`
 
 - Writing model + document templates + result consolidation.
 - Turns worker output into the shape the user actually receives.
+- Input is restricted to Head-approved facts and artifacts — the drafter is not a source of new facts, and a non-empty `unsupported_claims` in its result blocks the final gate (routing doc §2.4, §8).
 - Must not: execute anything, or hold judgment authority.
 
 Common rule: every bot receives a **bounded contract**, not the full conversation. The Head owns context; workers get only what their contract carries. Device and calendar data never enter a bot prompt unless required and explicitly approved.
@@ -140,10 +150,11 @@ The dispatch states in README are reinterpreted as LangGraph nodes and kept as-i
 
 Branching from the Head Orchestrator, reading graph state:
 
-- 검색 필요 → `searcher-bot`
-- 코드 필요 → `coder-bot`
-- 초안 필요 → `drafter-bot`
-- 검증 필요 → `reviewer-bot`
+- 분석 필요 → `gpt-analyzer`
+- 검색 필요 → `gemini-investigator`
+- 코드 필요 → `glm-coder`
+- 초안 필요 → `deepseek-drafter`
+- 검증 필요 → `claude-reviewer`
 
 Each result returns to the Head, which decides the next node. Bots never call each other directly.
 
@@ -193,7 +204,7 @@ interface CavemanEnvelope<TPayload> {
 
 ### Per-task payload, not one free-text field
 
-`body: string` in the current spike (`openclaw-upstream`'s `HeadTransitionWorkerCommand`/`WorkerResult`) is a schema in name only — the payload itself is unconstrained prose. v0.1 replaces it with typed payloads per task kind: `code_result.v1`, `research_result.v1`, `review_result.v1`, `device_result.v1`, plus `generic_result.v1` for what does not fit yet (see restriction below). A schema is a cognitive frame as much as a wire format — one universal payload silently limits what a worker considers reporting; per-kind schemas keep that frame matched to the work.
+`body: string` in the current spike (`openclaw-upstream`'s `HeadTransitionWorkerCommand`/`WorkerResult`) is a schema in name only — the payload itself is unconstrained prose. v0.1 replaces it with typed payloads per task kind: `analysis_result.v1`, `research_result.v1`, `draft_result.v1`, `code_result.v1`, `review_result.v1`, `device_result.v1`, plus `generic_result.v1` for what does not fit yet (see restriction below; field-level schemas in [Head Role and Model Routing v0.1](architecture/head-role-model-routing-v01.md) §8). A schema is a cognitive frame as much as a wire format — one universal payload silently limits what a worker considers reporting; per-kind schemas keep that frame matched to the work.
 
 ### Exception channels
 
@@ -314,7 +325,7 @@ Build:
 - LangGraph graph: nodes, branching, interrupt/resume, checkpointing.
 - Append-only ledger with replay.
 - Approval tokens with scope, expiry, one-time use, and cancel.
-- LangChain wrappers for the four bots.
+- LangChain wrappers for the five workers (`gpt-analyzer`, `gemini-investigator`, `deepseek-drafter`, `glm-coder`, `claude-reviewer` — see [Head Role and Model Routing v0.1](architecture/head-role-model-routing-v01.md)).
 - `WorkerCommand` / `WorkerResult` typed schemas with version validation — the `body: string` payload field is superseded by the Caveman envelope below, not built as free text and migrated later.
 - Caveman envelope, per-task-kind payload schemas, and the five exception channels — see [Worker Message Contract ("Caveman")](#worker-message-contract-caveman). `generic_result.v1` ships gated (never a completion path) from the start, not added as a restriction later.
 - Reviewer risk tiers (low / mid / high input scope) for `reviewer-bot`, including the `llm-task`-based independent intent digest for high-tier review.
@@ -329,6 +340,8 @@ Do not build (inherited from the 7/31 note):
 - Kafka or RabbitMQ.
 - Vector DB.
 - Always-on reviewer/tester chain.
+- An independent research service — `gemini-investigator` is a bounded worker inside the Head's dispatch, not a standing service with its own ingress.
+- Claude or Copilot recovery work — `claude-reviewer` runs `when_available` over its existing transport; no OAuth/integration recovery work is done to force availability.
 - Dynamic agent creation.
 - A second Discord frontend.
 
@@ -358,16 +371,16 @@ make test-worker-timeout-cancel
 | --- | --- |
 | Merging conversation and planning raises accidental-execution risk | Tool exposure gating at PolicyGate (tool profile is one of its three components — see [What PolicyGate Actually Is](#what-policygate-actually-is)), not prompt instructions |
 | LangChain is mistaken for the conducting layer | Layer boundary table plus the one-sentence rule; LangChain never selects the next step |
-| The graph grows into a general workflow engine | v0.1 nodes limited to four bots, approval, and review |
+| The graph grows into a general workflow engine | v0.1 nodes limited to five fixed workers, approval, and review |
 | `analyzer-bot` context grows unbounded | Ledger owns state; bots receive bounded contracts only |
 | Head boundary gets welded to OpenClaw internals | Contracts defined without OpenClaw-specific types, so the Head can move hosts later |
 | Workers self-report success falsely | Head requires evidence before accepting a result; schema validation rejects malformed output |
 
 ## Open Questions
 
-- Head model: keep GPT-5.5 as the primary reasoning candidate from the 7/31 note?
-- Per-bot model assignment: is GLM-5.2 the default worker model for all four, or per-bot?
-- Does Tester split back out of `reviewer-bot` in v0.2, or stay merged?
+- ~~Head model~~ — **resolved**: leader runs `gpt-5.5` ([routing doc](architecture/head-role-model-routing-v01.md) §2.1).
+- ~~Per-bot model assignment~~ — **resolved**: per-role bindings — GPT/Gemini/DeepSeek/GLM/Claude ([routing doc](architecture/head-role-model-routing-v01.md) §2, §11); route strings are configuration, activation is smoke-evidence-gated.
+- Does Tester split back out of `claude-reviewer` in v0.2, or stay merged?
 - When do Device Agent and Operator return as first-class roles?
 
 ## References
@@ -375,6 +388,7 @@ make test-worker-timeout-cancel
 - [Mixed Framework Orchestration Plan](../README.md)
 - [Verified spike commit](https://github.com/yham5016-source/openclaw-upstream/commit/bf46d017ce0c999890e40ba50983c0b59fae4672) — `openclaw-upstream@bf46d01`, branch `head-transition-v01`, contracts + in-memory ledger + SQLiteLedger + Discord adapter, 31/31 tests
 - [Adaptive Strategy Controller](2026-08-02-adaptive-strategy-controller.md) — how the Head decides when to stop, switch, suspend, and destroy a method
+- [Head Role and Model Routing v0.1](architecture/head-role-model-routing-v01.md) — agent registry, authority matrix, model routes, availability/fallback, final gate
 - [LangGraph Head Reference Patterns](2026-07-31-langgraph-head-reference-patterns.md)
 - [OpenClaw Runtime Skill Evolution Implementation Plan](superpowers/plans/2026-07-10-openclaw-runtime-skill-evolution.md)
 - LangGraph — state machine, interrupt, resume, checkpoint flow
