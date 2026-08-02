@@ -123,7 +123,7 @@ Each worker is `model + tools + rules`, wrapped by LangChain into a uniform call
 - For v0.1 it also owns test verification (FAIL_TO_PASS, PASS_TO_PASS, mutation proof).
 - Must not: implement feature code.
 
-**Risk-tiered input scope.** Same JSON contract everywhere is how a Head mis-compression survives review — the reviewer just re-checks the compiled artifact against itself. What the reviewer sees scales with how hard the decision is to undo:
+**Risk-tiered input scope.** Same JSON contract everywhere is how a Head mis-compression survives review — the reviewer just re-checks the compiled artifact against itself. What the reviewer sees scales with how hard the decision is to undo. **Tiers are cumulative** — each row adds to the rows above it, so the worker result and evaluation criteria are in scope at every tier; the high tier adds intent comparison on top of result review, it does not replace it:
 
 | Tier | Example | Reviewer input |
 | --- | --- | --- |

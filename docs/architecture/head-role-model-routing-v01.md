@@ -99,6 +99,20 @@ leader judgment + gpt-analyzer judgment
 
 This is the role-level corollary of ASC §6's axis enum (`model_provider` is a weak axis; a shared source lineage forfeits the strong one). **`gpt-analyzer` scores are advisory signals** — a score is not evidence, and can never ground a budget extension or a high-risk execution.
 
+**Dispatch threshold — resolved for v0.1.** When the leader reasons inline versus dispatches `gpt-analyzer`:
+
+```text
+leader inline:
+  single-step simple_query with no worker results to compare
+
+dispatch gpt-analyzer:
+  - investigation, code_change, high_risk_action — always
+  - two or more worker results need comparison, scoring, or synthesis
+  - evaluation criteria or acceptance criteria need generating
+```
+
+The rationale is contamination, not cost: anything that will later be scored or synthesized should be structured outside the leader's own reasoning stream, so the leader is not grading a structure it authored inline.
+
 ### 2.3 `gemini-investigator`
 
 ```yaml
@@ -223,7 +237,18 @@ Claude pass ≠ execution approval
 
 Execution always passes the Head's final gate. The reviewer can block; it cannot: edit code; extend budgets; substitute for user approval; send the final response; change task goals; re-invoke workers; or acquire new authority from its own review results.
 
-Reviewer context scales with risk tier per the analyzer doc's [risk-tiered input scope](../2026-08-01-analyzer-bot-main-agent-design.md#bot-contracts) — low: contract + result + criteria; mid: + relevant original excerpt; high: full original request + independently generated intent digest + Head contract, side by side.
+Reviewer context scales with risk tier per the analyzer doc's [risk-tiered input scope](../2026-08-01-analyzer-bot-main-agent-design.md#bot-contracts). **Tiers are cumulative — each tier adds to the one below, never replaces it:**
+
+```text
+low:   Caveman contract + worker result + evaluation criteria
+mid:   low + relevant excerpt of the original request
+high:  mid
+       + full original user request
+       + independently generated intent digest
+       + Head contract, compared side by side
+```
+
+The worker result and evaluation criteria are therefore in scope at **every** tier. A high-tier review checks both directions: that the Head's contract matches the user's intent, *and* that the worker's result satisfies the contract — intent comparison adds to result review, it does not swap it out.
 
 ## 3. Authority Matrix
 
@@ -237,9 +262,11 @@ Reviewer context scales with risk tier per the analyzer doc's [risk-tiered input
 | Document drafting | approves | structure | material | O | assist | review |
 | Result scoring | final | advisory | X | X | self-scoring forbidden | independent review |
 | Budget change | O | X | X | X | X | X |
-| High-risk approval | final gate | X | X | X | X | blocking review |
+| High-risk approval | confirms user approval + final gate | X | X | X | X | blocking review |
 | External execution | final gate | X | X | X | limited (sandboxed) | X |
 | Final response | O | X | X | X | X | X |
+
+On high-risk approval, the leader's role is to **verify that explicit user approval exists** and then run the final gate (§10, steps 9–10). The leader's own judgment never substitutes for user approval — "final gate" is a checkpoint the leader operates, not an approval the leader grants.
 
 ## 4. Control Plane and Data Plane
 
@@ -259,7 +286,7 @@ Routing patterns are not budget classes. The [ASC classifier](../2026-08-02-adap
 
 ```text
 leader
-  → gpt-analyzer, only if needed
+  → gpt-analyzer, only when the §2.2 dispatch threshold is met
   → final response
 ```
 
@@ -351,9 +378,9 @@ Each worker receives the minimum context its task needs — the analyzer doc's b
 | `gemini-investigator` | Investigation questions, source criteria, time range, forbidden sources, required evidence schema | Unrelated conversation context |
 | `deepseek-drafter` | Verified fact set, artifact refs, audience, tone, format, forbidden claims | Unverified material |
 | `glm-coder` | Acceptance criteria, repository scope, permitted files, test commands, tool policy, budget | Device/calendar data; unrelated context |
-| `claude-reviewer` | Risk-tier dependent (analyzer doc): low = contract + result + criteria; mid = + original excerpt; high = full original request + independent intent digest + Head contract, side by side | — |
+| `claude-reviewer` | Risk-tier dependent and **cumulative** (§2.6): low = contract + worker result + evaluation criteria; mid = low + relevant original excerpt; high = mid + full original user request + independent intent digest + Head contract, side by side | — |
 
-The high-tier reviewer must compare the original user request against the Head's compiled contract directly — that comparison is the point of the tier.
+The high-tier reviewer must compare the original user request against the Head's compiled contract directly — that comparison is the point of the tier — while still verifying the worker result against the evaluation criteria, which every tier carries.
 
 ## 8. Caveman Result Contracts
 
@@ -505,9 +532,9 @@ fallback_activated
 
 ## 12. v0.1 Scope
 
-Included: the six fixed logical roles; Head-centric dispatch; per-role Caveman schemas; per-role tool policy; availability states; explicit fallback/degraded handling; reviewer independence evaluation; risk-tier routing; the final gate; ledger events.
+Included: the six fixed logical roles; Head-centric dispatch; per-role Caveman schemas; per-role tool policy; availability states; explicit fallback/degraded handling; reviewer independence evaluation; risk-tier routing; the final gate; ledger events; **per-role usage metering** — tokens, cost, and tool calls recorded per `agent_id`, measure-only.
 
-Excluded: dynamic worker creation; direct worker-to-worker negotiation; worker self-routing; automatic role reassignment by model performance; automatic model tournaments; inheritance-based worker evolution; Grade 3 activation (ASC §6); always-on reviewer chains; reviewer direct code modification; worker budget self-extension.
+Excluded: dynamic worker creation; direct worker-to-worker negotiation; worker self-routing; automatic role reassignment by model performance; automatic model tournaments; inheritance-based worker evolution; Grade 3 activation (ASC §6); always-on reviewer chains; reviewer direct code modification; worker budget self-extension; **per-role hard caps** — v0.1 enforces only the ASC task-class budgets, and per-role caps are a v0.2 decision made from the metering logs, not guessed now.
 
 ## 13. Implementation Order
 
@@ -576,10 +603,10 @@ Only the leader decides and answers the user.
 
 ## Open Questions
 
-- The delegation threshold: when does the leader reason inline versus dispatch `gpt-analyzer`? (Cost says inline for small steps; contamination risk says dispatch for anything that will later need scoring.)
+- ~~The delegation threshold~~ — **resolved**: v0.1 defaults in §2.2 (inline only for single-step `simple_query` with nothing to compare; dispatch otherwise).
+- ~~Per-role sub-budgets~~ — **resolved**: v0.1 enforces task-class caps only and meters per-role usage; per-role hard caps move to v0.2 on operating logs (§12).
 - Antigravity runtime capability parity for `gemini-investigator` — which tool-profile fields the runtime can actually enforce.
 - Whether `claude-reviewer`'s degraded-mode substitute should be pinned to a fixed model family or chosen per task.
-- Per-role token/cost sub-budgets within a task class, or class-level budgets only (as now).
 
 ## References
 
