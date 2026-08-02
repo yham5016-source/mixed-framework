@@ -279,7 +279,30 @@ A contract-and-ledger spike exists against real OpenClaw internals, parked on it
 
 This code does not implement the code in this repo — this repo stays docs-only. The link is the evidence trail from design to a fixed, runnable commit.
 
-**Still open:** which store is canonical — the dedicated `SQLiteLedger` file, the shared OpenClaw state DB, or a per-agent DB — is unresolved (see Open Questions below). The dedicated-file version exists so this decision doesn't block having a durable ledger at all.
+**Canonical checkpoint DB — resolved.** A dedicated file, derived from OpenClaw's own `agentDir`, not hardcoded: `${agentDir}/analyzer-state.sqlite`. At current placement (`~/.openclaw/agents/analyzer/agent/`, confirmed against the live gateway — `~/.openclaw/agents/main/agent/openclaw-agent.sqlite` already exists there for `main`; the real layout has no top-level `data/` directory) that resolves to `~/.openclaw/agents/analyzer/agent/analyzer-state.sqlite`. The existing per-agent `openclaw-agent.sqlite` in that same directory is untouched — this is a second, dedicated file beside it, justified per `AGENTS.md`'s storage hierarchy (shared state DB → per-agent DB → dedicated SQLite "only when schema, volume, or lifecycle clearly does not fit those stores"): decoupling from OpenClaw's generated Kysely schema, a clean backup/delete/migration boundary, and a `StateStore` interface that can later point at the per-agent DB instead without touching call sites.
+
+```ts
+interface StateStore {
+  append(event: LedgerEvent): Promise<void>;
+  replay(lineageId: string): Promise<CanonicalState>;
+  saveCheckpoint(checkpoint: GraphCheckpoint): Promise<void>;
+  loadCheckpoint(threadId: string): Promise<GraphCheckpoint | null>;
+}
+```
+
+Tests exercise an `InMemoryStateStore`; only real runs use `SQLiteStateStore` — the same test/production split `SQLiteLedger` already proves.
+
+Tables in `analyzer-state.sqlite`:
+
+```text
+ledger_events        canonical, append-only — same event kinds as SQLiteLedger (openclaw-upstream@bf46d01)
+graph_checkpoints    LangGraph resume snapshot, regenerable from ledger_events
+artifacts
+approval_tokens
+assumption_registry  see Adaptive Strategy Controller §3
+```
+
+`ledger_events` is the source of truth; `graph_checkpoints` is a cache, not a second source of truth. No atomic cross-table transaction is assumed between them — recovery goes through idempotency keys and ledger replay, the same mechanism `SQLiteLedger` already proves, not a two-phase commit. A checkpoint that's stale or missing on restart is rebuilt by replaying `ledger_events`, not treated as data loss.
 
 ## v0.1 Scope
 
@@ -342,7 +365,6 @@ make test-worker-timeout-cancel
 
 - Head model: keep GPT-5.5 as the primary reasoning candidate from the 7/31 note?
 - Per-bot model assignment: is GLM-5.2 the default worker model for all four, or per-bot?
-- Checkpoint store: the spike's dedicated `SQLiteLedger` file, the shared OpenClaw state DB, or a per-agent DB?
 - Does Tester split back out of `reviewer-bot` in v0.2, or stay merged?
 - When do Device Agent and Operator return as first-class roles?
 
