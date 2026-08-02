@@ -114,6 +114,16 @@ Each bot is `model + tools + rules`, wrapped by LangChain into a uniform callabl
 - For v0.1 it also owns test verification (FAIL_TO_PASS, PASS_TO_PASS, mutation proof).
 - Must not: implement feature code.
 
+**Risk-tiered input scope.** Same JSON contract everywhere is how a Head mis-compression survives review — the reviewer just re-checks the compiled artifact against itself. What the reviewer sees scales with how hard the decision is to undo:
+
+| Tier | Example | Reviewer input |
+| --- | --- | --- |
+| Low | doc cleanup, rename, simple search | Caveman contract + worker result + evaluation criteria |
+| Mid | code change, design call, ambiguous research | + relevant excerpt of the original request |
+| High | delete, deploy, external send, payment, permission change | + original user request (full) + an independently generated intent digest + the Head's contract, compared side by side |
+
+The independent intent digest (high tier only) is produced by the `llm-task` tool (`docs/tools/llm-task.md`) — a single JSON-only, no-tools LLM call, not a new agent or a standing reviewer chain, so this stays inside the 7/31 note's non-scope list. Its input is **only** the original user request plus a fixed intent-extraction schema and the minimum original context needed; it must **never** receive the Head's contract, the Head's own intent summary, or the Head's conclusion. Feeding it the Head's compiled output turns "independent re-derivation" into "restate the Head's summary more confidently" — a different model calling the same compressed input is not independence. Configure a distinct model for these calls (`llm-task`'s per-call `model`/`allowedModels`) so the digest doesn't share the Head's specific failure modes.
+
 ### `drafter-bot`
 
 - Writing model + document templates + result consolidation.
@@ -137,6 +147,19 @@ Branching from the Head Orchestrator, reading graph state:
 
 Each result returns to the Head, which decides the next node. Bots never call each other directly.
 
+This rule stays absolute for *invocation* — no bot calls another bot's model or triggers its run. It does not ban data exchange. A bot that needs another bot's artifact (e.g. `tester` needing `coder`'s build command) requests it through the Ledger/artifact store, not by calling `coder-bot`:
+
+```text
+coder-bot   -> registers artifact in the Ledger
+tester-bot  -> artifact_request(artifact_id) -> Head/broker -> Ledger lookup -> artifact_ref returned
+```
+
+The boundary is data plane vs. control plane, not "bots may never exchange information":
+
+- **Data plane** (Ledger-mediated artifact reference): allowed without Head deliberation.
+- **Control plane** (goal, budget, method, hypothesis, or authority changes): Head only, no exceptions.
+- **Direct bot-to-bot invocation**: still forbidden.
+
 Control semantics:
 
 - `waiting_approval` is a LangGraph **interrupt**. Approval resumes the graph; rejection routes to `needs_revision`. This is exactly what the 7/31 note recommends LangGraph for — *"Head state machine, interrupt, resume, and checkpoint flow."*
@@ -145,6 +168,70 @@ Control semantics:
 - Worker results are schema- and version-validated. Malformed output is rejected rather than summarized.
 - The checkpoint store *is* the append-only ledger. Restarting `analyzer-bot` replays the ledger into the same canonical state.
 - Duplicate inbound events, worker commands, worker results, and delivery receipts are harmless — idempotency keys per request.
+
+## Worker Message Contract ("Caveman")
+
+Bare typed envelopes (`{ status, body: string }`) fix the wrapper but not the problem this document opened with: Head compiles the user's intent into a JSON contract, and workers execute that contract faithfully even when the compilation lost something. A worker that can only fill in the fields Head defined has no way to say "this contract looks wrong." Caveman is the message contract that gives it one, without reopening free-form back-and-forth.
+
+**Caveman and the Adaptive Strategy Controller are one design, not two layers.** Caveman defines what a message can say — the grammar and typed payload. ASC defines who adjudicates what gets said — grading, independence, stop/resume policy. An exception channel with nothing grading it is just an unpoliced bypass of the whole contract system; ASC's rules in [Adaptive Strategy Controller](2026-08-02-adaptive-strategy-controller.md) are what keep the channels below from becoming that.
+
+### Envelope
+
+```ts
+interface CavemanEnvelope<TPayload> {
+  schema: string;
+  schemaVersion: string;
+  taskId: string;
+  producer: string;
+  status: "ok" | "partial" | "failed" | "blocked" | "cancelled";
+  payload: TPayload;
+  evidenceRefs: string[];
+  exceptions: ContractException[];
+  resourceUsage: ResourceUsage;
+}
+```
+
+### Per-task payload, not one free-text field
+
+`body: string` in the current spike (`openclaw-upstream`'s `HeadTransitionWorkerCommand`/`WorkerResult`) is a schema in name only — the payload itself is unconstrained prose. v0.1 replaces it with typed payloads per task kind: `code_result.v1`, `research_result.v1`, `review_result.v1`, `device_result.v1`, plus `generic_result.v1` for what does not fit yet (see restriction below). A schema is a cognitive frame as much as a wire format — one universal payload silently limits what a worker considers reporting; per-kind schemas keep that frame matched to the work.
+
+### Exception channels
+
+Workers cannot renegotiate their own contract, but they can raise one of five typed exceptions instead of silently working around a bad one:
+
+```ts
+type ContractExceptionType =
+  | "needs_clarification"
+  | "schema_mismatch"
+  | "out_of_scope_finding"
+  | "assumption_violation"
+  | "novel_observation";
+```
+
+**A worker may raise an exception. A worker may not modify its own contract, budget, or scope by raising one.** Adjudication splits two ways:
+
+- **Deterministic, validator-checked:** missing required field, enum mismatch, schema version mismatch, explicit contract contradiction. No judgment call.
+- **Semantic, Head-adjudicated:** ambiguous intent, contract possibly diverging from the original request, a scope-external finding, a broken core assumption. High-risk tasks route these to `reviewer-bot`'s high-tier path (original request + independent digest), not to Head re-reading its own contract.
+
+Hard limits, so the exception channel doesn't reopen the long-meeting problem it replaces:
+
+- Raising an exception never auto-increases budget or scope.
+- `out_of_scope_finding` is report-only by default — it does not authorize the worker to act on it.
+- A repeated exception on the same claim/signature consumes budget exactly like a normal attempt (ASC §4-5); it is not a free retry.
+- Unfounded repeated exceptions are grounds for `suspended`, same as unfounded repeated attempts.
+- A worker never self-assigns `contract_status: verified` or a progress grade by raising or resolving an exception — ASC computes grades from evidence, never from a worker's own claim (ASC §6).
+
+Think of these as an alarm, not a door: pulling it gets someone's attention, it doesn't open anything by itself.
+
+### `generic_result.v1` is not a success path
+
+`generic` payload exists only as an emergency envelope for "this contract cannot express my result" — it is **not** a normal completion type:
+
+- Legal uses: legacy compatibility during the `body: string` migration, or carrying a `schema_mismatch` exception.
+- `status: ok` (or any completion claim) is not valid with a `generic` payload.
+- Never counts as progress evidence, never satisfies Grade 1–3, never justifies a budget or credit extension (ASC §4-6).
+- ASC treats every `generic` result as `blocked` or `partial`, nothing else.
+- To proceed, the Head must reissue the task on the correct typed schema — or, if no existing schema fits, escalate to a human and stop, rather than let `generic` quietly become the default path. An unmetered generic path is exactly how per-task schemas erode back into free text.
 
 ## What The Head Never Does Directly
 
@@ -156,7 +243,7 @@ Inherited verbatim from README's Team Lead forbidden list, now applied to `analy
 - No OAuth repair loops.
 - No device mutation.
 
-Merging conversation and planning into one agent revives the risk README avoided by splitting them — *"Team Lead executes instead of plans."* The mitigation is that these restrictions are enforced by **OpenClaw tool profile plus PolicyGate**, not by prompt wording. A tool the Head must not use is not exposed to the Head's profile at all.
+Merging conversation and planning into one agent revives the risk README avoided by splitting them — *"Team Lead executes instead of plans."* The mitigation is that these restrictions are enforced by **PolicyGate** (which is itself built from `analyzer-bot`'s tool profile, exec-approval flow, and sandbox tool policy — see [What PolicyGate Actually Is](#what-policygate-actually-is)), not by prompt wording. A tool the Head must not use is not exposed to the Head's profile at all.
 
 ## What PolicyGate Actually Is
 
@@ -168,7 +255,7 @@ Merging conversation and planning into one agent revives the risk README avoided
 | Exec-approval flow | Shell/exec actions that need a human yes/no before running | `src/agents/bash-tools.exec-approval-request.ts`, `src/agents/bash-tools.exec-approval-followup.ts`, `extensions/discord/src/approval-runtime.ts` |
 | Sandbox tool policy | What a sandboxed session may touch, independent of tool profile | `docs/gateway/sandbox-vs-tool-policy-vs-elevated.md` |
 
-"OpenClaw tool profile plus PolicyGate" (§What The Head Never Does Directly) means: restrict `analyzer-bot`'s tool profile so the forbidden tools are absent, and route anything that reaches exec-approval or sandbox policy through those existing gates. No new gate object, no new config surface — this matches the repo's own bar for adding config (`AGENTS.md`: prove existing behavior can't solve it first).
+"PolicyGate" (§What The Head Never Does Directly) means: restrict `analyzer-bot`'s tool profile so the forbidden tools are absent, and route anything that reaches exec-approval or sandbox policy through those existing gates. No new gate object, no new config surface — this matches the repo's own bar for adding config (`AGENTS.md`: prove existing behavior can't solve it first).
 
 ## Relationship To Runtime Skill Evolution
 
@@ -203,7 +290,9 @@ Build:
 - Append-only ledger with replay.
 - Approval tokens with scope, expiry, one-time use, and cancel.
 - LangChain wrappers for the four bots.
-- `WorkerCommand` / `WorkerResult` typed schemas with version validation.
+- `WorkerCommand` / `WorkerResult` typed schemas with version validation — the `body: string` payload field is superseded by the Caveman envelope below, not built as free text and migrated later.
+- Caveman envelope, per-task-kind payload schemas, and the five exception channels — see [Worker Message Contract ("Caveman")](#worker-message-contract-caveman). `generic_result.v1` ships gated (never a completion path) from the start, not added as a restriction later.
+- Reviewer risk tiers (low / mid / high input scope) for `reviewer-bot`, including the `llm-task`-based independent intent digest for high-tier review.
 - PolicyGate wiring for external side effects — composing the three existing primitives (see [What PolicyGate Actually Is](#what-policygate-actually-is)), not a new class.
 - Strategy control skeleton — pre-registered attempt specs, three counters (`attempt_credit`, `same_failure_confirmations`, `strategy_switch_count`), multi-dimensional budgets, local and global stop, and raw `progress_claims` as the structured worker return with grades derived by rule. Specified in [Adaptive Strategy Controller](2026-08-02-adaptive-strategy-controller.md). This is Head-internal policy and state; it adds no agent, no standing reviewer chain, and no dynamic agent creation, so the non-scope list below still holds.
 
@@ -242,7 +331,7 @@ make test-worker-timeout-cancel
 
 | Risk | Mitigation |
 | --- | --- |
-| Merging conversation and planning raises accidental-execution risk | Tool exposure gating at the OpenClaw profile and PolicyGate, not prompt instructions |
+| Merging conversation and planning raises accidental-execution risk | Tool exposure gating at PolicyGate (tool profile is one of its three components — see [What PolicyGate Actually Is](#what-policygate-actually-is)), not prompt instructions |
 | LangChain is mistaken for the conducting layer | Layer boundary table plus the one-sentence rule; LangChain never selects the next step |
 | The graph grows into a general workflow engine | v0.1 nodes limited to four bots, approval, and review |
 | `analyzer-bot` context grows unbounded | Ledger owns state; bots receive bounded contracts only |
