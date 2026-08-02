@@ -538,7 +538,7 @@ Excluded: dynamic worker creation; direct worker-to-worker negotiation; worker s
 
 ## 13. Implementation Order
 
-For the implementation repository (`openclaw-upstream`, continuing from the verified spike) — this repo stays docs-only:
+For the implementation repository (`openclaw-upstream`) — this repo stays docs-only. Per the [master plan](head-orchestrator-v01-master-plan.md) §21, implementation starts from a clean clone of the latest upstream `main`; the verified spike is donor/reference only, its nine files ported selectively rather than built upon:
 
 ```text
 1.  AgentRole / AgentRegistry types

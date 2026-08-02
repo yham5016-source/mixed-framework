@@ -12,6 +12,7 @@ Decision: mixed framework, single ingress
 - [Analyzer-bot Main Agent Design](docs/2026-08-01-analyzer-bot-main-agent-design.md) - settles the main agent question; supersedes the Team Lead Planner sections below.
 - [Adaptive Strategy Controller](docs/2026-08-02-adaptive-strategy-controller.md) - how the Head counts attempts, grades progress, and stops; the strategy-control skeleton inside analyzer-bot.
 - [Head Role and Model Routing v0.1](docs/architecture/head-role-model-routing-v01.md) - the six fixed roles (leader + five workers), their model routes, authority matrix, fallback rules, and final gate.
+- [Head Orchestrator v0.1 Master Plan](docs/architecture/head-orchestrator-v01-master-plan.md) - the consolidated implementation-governing plan: full architecture, phased roadmap (P0-P7), rollout stages, and test strategy.
 
 ## One-Line Decision
 
