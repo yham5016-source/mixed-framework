@@ -134,6 +134,8 @@ interface CoreAssumptionRecord {
   scopeId: string;
   kind: CoreAssumptionKind;
   canonicalStatement: string;
+  normalizedText: string;
+  normalizationVersion: number;
   normalizedHash: string;
   status: CoreAssumptionStatus;
   supersedesId?: string;
@@ -152,6 +154,8 @@ CREATE TABLE core_assumptions (
   scope_id TEXT NOT NULL,
   kind TEXT NOT NULL,
   canonical_statement TEXT NOT NULL,
+  normalized_text TEXT NOT NULL,
+  normalization_version INTEGER NOT NULL,
   normalized_hash TEXT NOT NULL,
   status TEXT NOT NULL,
   supersedes_id TEXT,
@@ -181,7 +185,7 @@ Operating rules:
 - A wording-only change is an alias on the existing ID, not a new assumption.
 - An actual change in meaning gets a new ID with `supersedesId` set — this consumes `strategy_switch_count`, same as any `core_assumption` change (table above).
 - `retired`/`superseded` rows are never deleted.
-- `normalizedHash` catches exact and near-exact wording, not full semantic equivalence — deeper duplicate merging is deferred past v0.1.
+- `normalizedText` is `canonicalStatement` after v0.1's normalization function (e.g. whitespace/case folding); `normalizationVersion` records which version of that function produced it, so a later change to the function doesn't get silently compared against hashes it didn't generate. `normalizedHash` is a hash of `normalizedText` under `normalizationVersion` — it catches exact matches after that normalization, nothing more. It does not catch semantic duplicates (a rewritten but equivalent assumption gets a new ID), and does not catch near-exact rewording beyond what the normalization function itself folds away. Semantic and near-duplicate merging is deferred past v0.1 to a reviewer/maintenance pass, not attempted at write time.
 
 `evidence_policy_id` resolves to a policy record that must define, at minimum:
 
@@ -266,7 +270,7 @@ manual_extension:
   max_cumulative_credit_per_method_lineage: 4.0
 ```
 
-**`max_cumulative_credit_per_method_lineage` — resolved to `4.0`.** The base hard cap is 3.0 (§5); v0.1 allows at most 1.0 of total approval headroom across the whole lineage, matching `max_grants_per_suspension_episode: 1`. A method at 2.4 of 3.0 granted +0.5 gets a lineage-wide allowance of 3.5 — still under the 4.0 ceiling. The ceiling bounds total approved headroom for the lineage, not any single grant; exact tuning against operating logs stays open the same way the 0.2/0.5/0.8 credit weights above do, but 4.0 is the v0.1 default, not a placeholder.
+**`max_cumulative_credit_per_method_lineage` — resolved to `4.0`.** The base hard cap is 3.0 (§5); v0.1 allows at most 1.0 of total approval headroom across the whole lineage, matching `max_grants_per_suspension_episode: 1`. A single approval grant adds at most **1.0, or the lineage's remaining headroom under the 4.0 ceiling — whichever is smaller.** A method at 2.4 of 3.0 granted +0.5 gets a lineage-wide allowance of 3.5, still under the 4.0 ceiling and still leaving 0.5 of grantable headroom for a later episode; a method already at a lineage-wide allowance of 3.7 cannot be granted a full +1.0, only the remaining 0.3, even though 1.0 is the nominal per-grant cap. Exact tuning against operating logs stays open the same way the 0.2/0.5/0.8 credit weights above do, but 4.0 is the v0.1 default, not a placeholder.
 
 One grant per suspension episode is not enough on its own, because a method could suspend, re-enter the same state, and claim a fresh episode. Hence the second limit, on the whole lineage. A **new suspension episode requires new grade 1 or 2 evidence or a real environment change** — cycling the state without anything changing does not open one.
 

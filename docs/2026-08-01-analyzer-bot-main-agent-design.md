@@ -299,10 +299,11 @@ ledger_events        canonical, append-only — same event kinds as SQLiteLedger
 graph_checkpoints    LangGraph resume snapshot, regenerable from ledger_events
 artifacts
 approval_tokens
-assumption_registry  see Adaptive Strategy Controller §3
+core_assumptions          see Adaptive Strategy Controller §3
+core_assumption_aliases   see Adaptive Strategy Controller §3
 ```
 
-`ledger_events` is the source of truth; `graph_checkpoints` is a cache, not a second source of truth. No atomic cross-table transaction is assumed between them — recovery goes through idempotency keys and ledger replay, the same mechanism `SQLiteLedger` already proves, not a two-phase commit. A checkpoint that's stale or missing on restart is rebuilt by replaying `ledger_events`, not treated as data loss.
+`ledger_events` is the source of truth; `graph_checkpoints` is a cache, not a second source of truth. Correctness does not depend on an atomic update across tables — recovery goes through idempotency keys and ledger replay, the same mechanism `SQLiteLedger` already proves — but the implementation may use a SQLite transaction across `ledger_events` and `graph_checkpoints` where useful, since it does not need to for correctness. A checkpoint that's stale or missing on restart is rebuilt by replaying `ledger_events`, not treated as data loss.
 
 ## v0.1 Scope
 
