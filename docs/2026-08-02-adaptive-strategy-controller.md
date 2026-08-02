@@ -91,9 +91,11 @@ attempt_spec:
 
   success_criteria:
   stop_criteria:
-  progress_claims:
+  preregistered_claims:
   local_budget:
 ```
+
+`preregistered_claims` (the frozen pre-registration list) and the worker's returned `progress_claims` (§6) are **two different objects that previously shared one name**. The spec list is immutable and exists before the attempt; the worker return exists after it and points back via `preregistered_claim_id`. Conflating them in a `WorkerResult` schema would undo the frozen-before/recorded-after split this section establishes.
 
 **Recorded after the attempt.** Append-only; never edits the spec:
 
@@ -265,6 +267,8 @@ strategy_switch_count
 
 The evidence in the first row is graded by the §6 rules, not by the Head's assertion that it found something new. Grade 3 or 4 does not qualify — otherwise "I understand the problem better now" becomes a budget refill, which is the self-narration problem wearing yet another hat.
 
+**Grading evidence that arrives outside an attempt.** §6's derivation is written over a completed attempt's returned claims, but resume-triggering evidence arrives while nothing is running. The same derivation applies to the evidence object directly: it is grade 1 when its qualifying artifact is intrinsic and externally observable — a failing test, a reproducible counterexample, an external observation — and grade 2 when it has been confirmed along a path satisfying the §6 axis enum. Grades 3 and 4 are unreachable outside an attempt (there is no pre-registered claim to satisfy), which is consistent rather than limiting: only grades 1 and 2 qualify for restoration anyway. What the Head may never do is assert the grade itself to unlock the restore.
+
 The principle underneath: **restoration is proportional to actual state change, not to judgment.**
 
 | What changed | Restoration |
@@ -276,7 +280,7 @@ The principle underneath: **restoration is proportional to actual state change, 
 
 ### Manual Extension
 
-An approval **adds a delta; it never resets the counter.** A method at 2.4 of 3.0 granted +0.5 does not return to 2.9 remaining — its total allowance becomes 3.5, it continues from 2.4, and only the 0.5 is newly spendable.
+An approval **adds a delta; it never resets the counter.** A method at 2.4 of 3.0 granted +0.5 is not handed a fresh allowance with its spend wiped — its total allowance becomes 3.5, it continues from 2.4, and the grant adds exactly 0.5 to whatever headroom remained.
 
 ```yaml
 manual_extension:
@@ -346,7 +350,9 @@ progress_claims:
 | 3 Structural | A pre-registered structural claim has its condition satisfied — **disabled in v0.1, see below** |
 | 4 Narrative | Everything else |
 
-Grades 1 and 2 stand alone. Grade 3 counts **only against a `preregistered_claim_id`** — the claim must have been written into `attempt_spec.progress_claims` before the attempt, in a form that could have failed. Dimension reduction needs `before_value` and `after_value` on the candidate count; contradiction resolution needs the contradiction named earlier; a predictive model needs the prediction recorded first. Anything described only afterward lands in grade 4. Grade 4 never counts on its own.
+Grade 1's "candidate registry" is the ledger's tracked set of live candidate hypotheses and solutions — the §7 hypothesis records. A qualifying change is an evidence-driven addition, elimination, or state transition recorded there; the Head restating its shortlist is not one.
+
+Grades 1 and 2 stand alone. Grade 3 counts **only against a `preregistered_claim_id`** — the claim must have been written into `attempt_spec.preregistered_claims` before the attempt, in a form that could have failed. Dimension reduction needs `before_value` and `after_value` on the candidate count; contradiction resolution needs the contradiction named earlier; a predictive model needs the prediction recorded first. Anything described only afterward lands in grade 4. Grade 4 never counts on its own.
 
 Requiring only externally measurable progress would be too strict — it produces a system that chases what is measurable and manufactures checkboxes. Product concepts, organizational design, problem definition, and research hypotheses without a test yet are real work. Grade 3 exists so that work is not amputated; the pre-registration requirement is what stops grade 3 from becoming a loophole.
 
@@ -380,17 +386,19 @@ The point of the enum is not the axis count — it's whether the difference actu
 
 Changing temperature twice is not independence — it produces two weak differences at best (both `sampling_path`), and often none. Counting axes without weighting and without a fixed enum would let the second kind masquerade as the first.
 
+**Role-level corollary** (fixed in [Head Role and Model Routing v0.1](architecture/head-role-model-routing-v01.md)): `leader` and `gpt-analyzer` share a model route and typically a source lineage, so their agreement never constitutes grade-2 verification, and a degraded (non-independent) review is recorded as such and never counted toward grade 2.
+
 ## 7. Two State Machines
 
 ```text
-Method:      active → weakened → suspended
+Method:      active → weakened → suspended → active   (resume, §4 triggers only)
                                    ↘ destroyed
 
 Hypothesis:  candidate → supported → weakened → suspended → active
                                               ↘ falsified  ↘ reopened_for_exploration
 ```
 
-**Methods.** Lack of progress sends a method to `suspended`, which is reversible and retains its record. Only a **hard failure** — a reproduced structural contradiction, or a demonstrated violation of the method's own premise — sends it to `destroyed`. This follows directly from §2: self-assessment gets the reversible action, evidence gets the irreversible one.
+**Methods.** Lack of progress sends a method to `suspended`, which is reversible and retains its record. The `suspended → active` transition exists and is governed entirely by §4's restoration table — grade 1/2 evidence, environment change, approval, or `force_resume`; nothing else re-activates a suspended method, and elapsed time in particular does not (§10). Only a **hard failure** — a reproduced structural contradiction, or a demonstrated violation of the method's own premise — sends it to `destroyed`. This follows directly from §2: self-assessment gets the reversible action, evidence gets the irreversible one.
 
 **Hypotheses.** Failing to solve is not refuting. A hypothesis reaches `falsified` only on direct evidence: a reproducible counterexample, a core prediction failing, an incompatible observation, or failing a discriminating test defined in advance. When several methods fail under one hypothesis, it becomes `suspended`, not `falsified`.
 
@@ -577,11 +585,13 @@ Decomposition, analogy, and thought experiment are used by novices and experts a
 
 ```text
 base model
-vs operator list only
-vs operator list + invocation policy
-vs invocation policy + stop rules
-vs invocation policy + stop rules + inheritance
+  + operator list
+    + invocation policy
+      + stop rules
+        + inheritance
 ```
+
+Each rung adds exactly one component on top of the previous rung — nothing is removed between rungs, so a delta between two adjacent rungs is attributable to the one component that changed.
 
 Measured on: success rate, total tokens, wall-clock time, tool calls, repeated-failure rate, false confidence, early-stop error, recovery rate after a strategy switch, reproducibility.
 
@@ -641,6 +651,7 @@ What remains open is parameter and operating policy, not structure.
 
 - [Mixed Framework Orchestration Plan](../README.md)
 - [Analyzer-bot Main Agent Design](2026-08-01-analyzer-bot-main-agent-design.md)
+- [Head Role and Model Routing v0.1](architecture/head-role-model-routing-v01.md) — agent registry, per-role authority, model routes, fallback and independence at the role level
 - [LangGraph Head Reference Patterns](2026-07-31-langgraph-head-reference-patterns.md)
 - [OpenClaw Runtime Skill Evolution Implementation Plan](superpowers/plans/2026-07-10-openclaw-runtime-skill-evolution.md)
 - Representational change theory of insight — the basis for §13's retained conclusion
