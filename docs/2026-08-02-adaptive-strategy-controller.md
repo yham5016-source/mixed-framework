@@ -199,6 +199,8 @@ CREATE TABLE core_assumption_registry_meta (
 
   Every write to `core_assumptions` for a given `(scope_type, scope_id)` must carry the `normalization_version` currently recorded in `core_assumption_registry_meta` for that scope; a write under any other version is rejected. Changing the version is a **migration, not a runtime write**: re-normalize and re-hash every existing row for that scope under the new function inside one transaction, check the resulting `normalized_hash` values for collisions before committing anything, and only then advance `core_assumption_registry_meta`. `UNIQUE(scope_type, scope_id, normalized_hash)` is unchanged by this — it still enforces one row per hash within the scope's single active version.
 
+  **Concurrency.** A normal registry write reads `core_assumption_registry_meta`, validates the caller's `normalization_version` against it, and inserts into `core_assumptions` inside one `BEGIN IMMEDIATE` transaction — the version check and the insert cannot see two different versions of "current." A normalization migration takes the same write lock (`BEGIN IMMEDIATE` on the same scope) for its whole re-normalize/re-hash/collision-check/advance-metadata sequence, so no normal registry write for that scope is admitted while a migration is in flight; it simply waits for the lock like any other writer, it is not a separate fast path. v0.1 keeps migration **scope-atomic** — one `(scope_type, scope_id)` per migration transaction. A scope large enough that this becomes impractical is a v0.2 extension (shadow-table rebuild: build the re-normalized table alongside the live one, then swap), not a v0.1 mechanism.
+
 `evidence_policy_id` resolves to a policy record that must define, at minimum:
 
 ```yaml
