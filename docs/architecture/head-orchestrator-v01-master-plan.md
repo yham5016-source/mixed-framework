@@ -809,6 +809,21 @@ openclaw-upstream  실제 runtime 코드 — SQLite, LangGraph, OpenClaw adapter
 
 기존 스파이크 branch는 donor/reference로 보존한다. (analyzer 문서의 Verified Spike 절은 증거 기록으로 유효하되, 구현 기준이 아니다.)
 
+### 차용 결정 (Adopted Components, 2026-08 조사)
+
+원칙은 7/31 노트와 동일 — 플랫폼이 아니라 패턴을 흡수한다. 단 아래 항목은 우리가 쓸 코드를 실제로 지우므로 **런타임 채용**한다. 신규 서비스 의존은 LiteLLM 하나로 억제한다.
+
+| 구성요소 | 판정 | 지워지는 작업 |
+| --- | --- | --- |
+| **LiteLLM** (self-host 게이트웨이, Apache 2.0) | 채용 — 유일한 신규 서비스 의존 | `ModelRoute`/`Availability`/fallback/비용 계측 자작(P2·P5). **역할당 API 키 1개**를 발급하면 §10.2의 per-role usage metering이 게이트웨이 기능으로 충족된다 |
+| **LangGraph JS `SqliteSaver`** | 채용 | `graph_checkpoints` 저장 계층 자작(P3의 절반). ⚠️ checkpointer SQLi→RCE 취약점 공개 이력(2026, Check Point) — **패치 버전 고정 필수** |
+| **Zod** | 채용 | Caveman runtime validator의 기반(P1) |
+| **promptfoo** | 채용 (7/31 노트에 이미 있음) | P6 adversarial/회귀 테스트 하네스 |
+| **OpenClaw sandbox tool policy** | 채용 (기존 기능) | `glm-coder`의 `sandboxed` 실행. Microsandbox(libkrun microVM)는 격리 강도가 부족할 때만 v0.2에서 검토 |
+| **Langfuse / traceAI** (OTel LLM 트레이싱) | 조건부 | P7 Shadow Mode 비교 대시보드 자작. Ledger가 canonical이고 트레이싱은 ops 뷰라는 경계 유지 |
+| **Vercel AI SDK** | 플랜 B | LiteLLM 셋업이 막히면 in-process 프로바이더 통일로 대체. 단 비용 추적·fallback은 자작으로 되돌아옴 |
+| **A2A · Temporal · Pydantic AI** | 참조만 | A2A는 worker 간 통신 표준이라 §7 설계 위반, Temporal은 두 번째 워크플로 플랫폼(7/31 keep-out 정신), Pydantic AI는 Python — Zod가 TS 등가물 |
+
 ## 22. 구현 로드맵
 
 ```mermaid
@@ -832,13 +847,13 @@ flowchart LR
 
 ### Phase 1 — Policy Core
 
-구현: CavemanEnvelope, role payload, runtime validator, generic_result 제한, Grade 3 제한, task class, budget config, assumption registry, normalization migration, unit tests.
+구현: CavemanEnvelope, role payload, runtime validator (Zod 기반 — §21 차용 결정), generic_result 제한, Grade 3 제한, task class, budget config, assumption registry, normalization migration, unit tests.
 
 완료 조건: schema mismatch 차단, generic success 우회 차단, Grade 3 extension 차단, task class 동결, assumption 중복 차단, migration rollback.
 
 ### Phase 2 — Worker Adapter
 
-구현: legacy WorkerCommand/WorkerResult adapter, Caveman canonical path, schema negotiation, cancellation·late result 보존, adapter usage 기록(ledger 이벤트 발행은 Phase 3의 Ledger 착지 후 연결).
+구현: legacy WorkerCommand/WorkerResult adapter, Caveman canonical path, schema negotiation, cancellation·late result 보존, adapter usage 기록(ledger 이벤트 발행은 Phase 3의 Ledger 착지 후 연결). 모델 라우트는 LiteLLM 게이트웨이 경유 — 라우트 등록, fallback, availability, 비용 계측은 게이트웨이에 위임하고 어댑터는 역할 계약만 소유한다 (§21 차용 결정).
 
 완료 조건: legacy 호환, unknown schema 차단, 자유서술 fallback 금지, generic result 성공 변환 금지.
 
@@ -846,9 +861,9 @@ flowchart LR
 
 ### Phase 3 — StateStore와 Ledger
 
-구현: StateStore interface, InMemoryStateStore, SQLiteStateStore, append/replay, checkpoint rebuild, idempotency, artifact registry, approval token, cancellation, delivery receipt.
+구현: StateStore interface, InMemoryStateStore, SQLiteStateStore, append/replay, checkpoint rebuild, idempotency, artifact registry, approval token, cancellation, delivery receipt. checkpoint 저장은 LangGraph `SqliteSaver` 채용 — 자작 대상은 `ledger_events`와 그 replay뿐이다 (§21 차용 결정).
 
-완료 조건: crash 후 replay, stale checkpoint 복구, duplicate event 차단, cancel 후 late result 거부, 기존 OpenClaw DB 무수정.
+완료 조건: crash 후 replay, stale checkpoint 복구, duplicate event 차단, cancel 후 late result 거부, 기존 OpenClaw DB 무수정, **checkpointer 패치 버전 고정 확인**.
 
 ### Phase 4 — ASC Runtime
 
@@ -872,7 +887,9 @@ Discord ingress → Leader → task classification → WorkerCommand → Worker
 → Delivery Receipt
 ```
 
-필수 시나리오: ① 정상 조사 요청 ② 정상 코드 변경 ③ malformed result ④ generic success 우회 ⑤ Worker timeout ⑥ cancel 후 late result ⑦ restart 후 replay ⑧ stale checkpoint ⑨ 승인 없는 high-risk ⑩ 독립 검증 없는 high-risk ⑪ background cap 도달 stop report.
+필수 시나리오: ① 정상 조사 요청 ② 정상 코드 변경 ③ malformed result ④ generic success 우회 ⑤ Worker timeout ⑥ cancel 후 late result ⑦ restart 후 replay ⑧ stale checkpoint ⑨ 승인 없는 high-risk ⑩ 독립 검증 없는 high-risk ⑪ background cap 도달 stop report. (adversarial 시나리오 하네스는 promptfoo — §21 차용 결정.)
+
+**첫 관통은 degraded 로스터로 한다.** leader + `glm-coder` 두 라우트만으로 §19 fallback 규칙 하에 시나리오 ②·③·⑦을 먼저 통과시킨다 — 이 구성은 설계상 이미 합법이며, 1일 목표다. 나머지 워커는 라우트 smoke 통과 순서대로 활성화하고 시나리오를 증분 확장한다.
 
 ### Phase 7 — 운영 배치
 
