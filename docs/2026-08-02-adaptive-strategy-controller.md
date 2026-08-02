@@ -186,6 +186,18 @@ Operating rules:
 - An actual change in meaning gets a new ID with `supersedesId` set — this consumes `strategy_switch_count`, same as any `core_assumption` change (table above).
 - `retired`/`superseded` rows are never deleted.
 - `normalizedText` is `canonicalStatement` after v0.1's normalization function (e.g. whitespace/case folding); `normalizationVersion` records which version of that function produced it, so a later change to the function doesn't get silently compared against hashes it didn't generate. `normalizedHash` is a hash of `normalizedText` under `normalizationVersion` — it catches exact matches after that normalization, nothing more. It does not catch semantic duplicates (a rewritten but equivalent assumption gets a new ID), and does not catch near-exact rewording beyond what the normalization function itself folds away. Semantic and near-duplicate merging is deferred past v0.1 to a reviewer/maintenance pass, not attempted at write time.
+- **Exactly one `normalization_version` is active per registry at a time in v0.1.** `normalization_version` does **not** join the `UNIQUE` constraint — adding it there would let the same statement register twice under two versions, which is the duplicate-registration hole this registry exists to close, not a way to avoid it. Instead, registry metadata tracks the single current version:
+
+```sql
+CREATE TABLE core_assumption_registry_meta (
+  scope_type TEXT NOT NULL,
+  scope_id TEXT NOT NULL,
+  normalization_version INTEGER NOT NULL,
+  PRIMARY KEY (scope_type, scope_id)
+);
+```
+
+  Every write to `core_assumptions` for a given `(scope_type, scope_id)` must carry the `normalization_version` currently recorded in `core_assumption_registry_meta` for that scope; a write under any other version is rejected. Changing the version is a **migration, not a runtime write**: re-normalize and re-hash every existing row for that scope under the new function inside one transaction, check the resulting `normalized_hash` values for collisions before committing anything, and only then advance `core_assumption_registry_meta`. `UNIQUE(scope_type, scope_id, normalized_hash)` is unchanged by this — it still enforces one row per hash within the scope's single active version.
 
 `evidence_policy_id` resolves to a policy record that must define, at minimum:
 
