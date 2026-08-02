@@ -118,6 +118,89 @@ attempt_outcome:
 - Core fields are **controlled IDs and enums**, not free strings. `core_assumption_ids` references a registry; new entries are created deliberately and are visible.
 - `lineage_id` and `parent_method_id` are mandatory, so derivation stays on record even when labels drift.
 
+### `core_assumption_ids` registry — resolved
+
+**Separate from `preregistered_claim_id` (§6).** Two different registries, two different jobs: `core_assumption_ids` stops a method from being re-registered under a disguised premise; `preregistered_claim_id` stops a structural claim from being backdated. Specifying this registry does **not** activate Grade 3 — Grade 3 stays disabled until the `preregistered_claim_id` registry (§6, still absent) exists.
+
+Minimal v0.1 schema. It closes duplicate-premise registration and keeps a retirement trail; it does not attempt full semantic deduplication — that stays a reviewer/maintenance step, not a v0.1 write-path mechanism:
+
+```ts
+type CoreAssumptionKind = "causal" | "constraint" | "environment" | "data" | "method";
+type CoreAssumptionStatus = "proposed" | "active" | "challenged" | "retired" | "superseded";
+
+interface CoreAssumptionRecord {
+  assumptionId: string; // ca_<ULID>
+  scopeType: "task" | "project" | "global";
+  scopeId: string;
+  kind: CoreAssumptionKind;
+  canonicalStatement: string;
+  normalizedText: string;
+  normalizationVersion: number;
+  normalizedHash: string;
+  status: CoreAssumptionStatus;
+  supersedesId?: string;
+  createdBy: string;
+  createdAt: string;
+  retiredAt?: string;
+  retirementReason?: string;
+  version: number;
+}
+```
+
+```sql
+CREATE TABLE core_assumptions (
+  assumption_id TEXT PRIMARY KEY,
+  scope_type TEXT NOT NULL,
+  scope_id TEXT NOT NULL,
+  kind TEXT NOT NULL,
+  canonical_statement TEXT NOT NULL,
+  normalized_text TEXT NOT NULL,
+  normalization_version INTEGER NOT NULL,
+  normalized_hash TEXT NOT NULL,
+  status TEXT NOT NULL,
+  supersedes_id TEXT,
+  created_by TEXT NOT NULL,
+  created_at INTEGER NOT NULL,
+  retired_at INTEGER,
+  retirement_reason TEXT,
+  version INTEGER NOT NULL DEFAULT 1,
+  UNIQUE(scope_type, scope_id, normalized_hash)
+);
+
+CREATE TABLE core_assumption_aliases (
+  assumption_id TEXT NOT NULL,
+  alias_text TEXT NOT NULL,
+  alias_hash TEXT NOT NULL,
+  created_at INTEGER NOT NULL,
+  PRIMARY KEY (assumption_id, alias_hash),
+  FOREIGN KEY (assumption_id) REFERENCES core_assumptions(assumption_id)
+);
+```
+
+Operating rules:
+
+- `attempt_spec` stores `assumptionId[]`, never a free sentence.
+- An assumption is created before the attempt and frozen — the Head cannot edit its content afterward.
+- The same `(scopeType, scopeId, normalizedHash)` never gets a second ID; the `UNIQUE` constraint enforces this at the storage layer, not by convention.
+- A wording-only change is an alias on the existing ID, not a new assumption.
+- An actual change in meaning gets a new ID with `supersedesId` set — this consumes `strategy_switch_count`, same as any `core_assumption` change (table above).
+- `retired`/`superseded` rows are never deleted.
+- `normalizedText` is `canonicalStatement` after v0.1's normalization function (e.g. whitespace/case folding); `normalizationVersion` records which version of that function produced it, so a later change to the function doesn't get silently compared against hashes it didn't generate. `normalizedHash` is a hash of `normalizedText` under `normalizationVersion` — it catches exact matches after that normalization, nothing more. It does not catch semantic duplicates (a rewritten but equivalent assumption gets a new ID), and does not catch near-exact rewording beyond what the normalization function itself folds away. Semantic and near-duplicate merging is deferred past v0.1 to a reviewer/maintenance pass, not attempted at write time.
+- **Exactly one `normalization_version` is active per registry at a time in v0.1.** `normalization_version` does **not** join the `UNIQUE` constraint — adding it there would let the same statement register twice under two versions, which is the duplicate-registration hole this registry exists to close, not a way to avoid it. Instead, registry metadata tracks the single current version:
+
+```sql
+CREATE TABLE core_assumption_registry_meta (
+  scope_type TEXT NOT NULL,
+  scope_id TEXT NOT NULL,
+  normalization_version INTEGER NOT NULL,
+  PRIMARY KEY (scope_type, scope_id)
+);
+```
+
+  Every write to `core_assumptions` for a given `(scope_type, scope_id)` must carry the `normalization_version` currently recorded in `core_assumption_registry_meta` for that scope; a write under any other version is rejected. Changing the version is a **migration, not a runtime write**: re-normalize and re-hash every existing row for that scope under the new function inside one transaction, check the resulting `normalized_hash` values for collisions before committing anything, and only then advance `core_assumption_registry_meta`. `UNIQUE(scope_type, scope_id, normalized_hash)` is unchanged by this — it still enforces one row per hash within the scope's single active version.
+
+  **Concurrency.** A normal registry write reads `core_assumption_registry_meta`, validates the caller's `normalization_version` against it, and inserts into `core_assumptions` inside one `BEGIN IMMEDIATE` transaction — the version check and the insert cannot see two different versions of "current." A normalization migration takes the same write lock (`BEGIN IMMEDIATE` on the same scope) for its whole re-normalize/re-hash/collision-check/advance-metadata sequence, so no normal registry write for that scope is admitted while a migration is in flight; it simply waits for the lock like any other writer, it is not a separate fast path. v0.1 keeps migration **scope-atomic** — one `(scope_type, scope_id)` per migration transaction. A scope large enough that this becomes impractical is a v0.2 extension (shadow-table rebuild: build the re-normalized table alongside the live one, then swap), not a v0.1 mechanism.
+
 `evidence_policy_id` resolves to a policy record that must define, at minimum:
 
 ```yaml
@@ -198,8 +281,10 @@ An approval **adds a delta; it never resets the counter.** A method at 2.4 of 3.
 ```yaml
 manual_extension:
   max_grants_per_suspension_episode: 1
-  max_cumulative_credit_per_method_lineage: configurable
+  max_cumulative_credit_per_method_lineage: 4.0
 ```
+
+**`max_cumulative_credit_per_method_lineage` — resolved to `4.0`.** The base hard cap is 3.0 (§5); v0.1 allows at most 1.0 of total approval headroom across the whole lineage, matching `max_grants_per_suspension_episode: 1`. A single approval grant adds at most **1.0, or the lineage's remaining headroom under the 4.0 ceiling — whichever is smaller.** A method at 2.4 of 3.0 granted +0.5 gets a lineage-wide allowance of 3.5, still under the 4.0 ceiling and still leaving 0.5 of grantable headroom for a later episode; a method already at a lineage-wide allowance of 3.7 cannot be granted a full +1.0, only the remaining 0.3, even though 1.0 is the nominal per-grant cap. Exact tuning against operating logs stays open the same way the 0.2/0.5/0.8 credit weights above do, but 4.0 is the v0.1 default, not a placeholder.
 
 One grant per suspension episode is not enough on its own, because a method could suspend, re-enter the same state, and claim a fresh episode. Hence the second limit, on the whole lineage. A **new suspension episode requires new grade 1 or 2 evidence or a real environment change** — cycling the state without anything changing does not open one.
 
@@ -265,7 +350,7 @@ Grades 1 and 2 stand alone. Grade 3 counts **only against a `preregistered_claim
 
 Requiring only externally measurable progress would be too strict — it produces a system that chases what is measurable and manufactures checkboxes. Product concepts, organizational design, problem definition, and research hypotheses without a test yet are real work. Grade 3 exists so that work is not amputated; the pre-registration requirement is what stops grade 3 from becoming a loophole.
 
-**Grade 3 evaluation is disabled in v0.1.** `preregistered_claim_id` only resolves against a real registry — deduplicated, retired, immutable claim IDs — and that registry does not exist yet (§3's `core_assumption_ids` registry has the identical gap: "Concrete schema for the `core_assumption_ids` registry" is still an Open Question). Shipping the field without the registry behind it would let a claim look pre-registered while nothing verifies it actually was. Until the registry, immutable claim IDs, and a before/after verifier land (v0.2, §14):
+**Grade 3 evaluation is disabled in v0.1.** `preregistered_claim_id` only resolves against a real registry — deduplicated, retired, immutable claim IDs — and that registry does not exist yet. This is **not** the same registry as `core_assumption_ids`, which §3 now specifies: `core_assumption_ids` stops disguised method re-registration, `preregistered_claim_id` stops backdated structural claims, and specifying one does not activate the other. Shipping the `preregistered_claim_id` field without its own registry behind it would let a claim look pre-registered while nothing verifies it actually was. Until that registry, immutable claim IDs, and a before/after verifier land (v0.2, §14):
 
 - Structural claims are still recorded, tagged `provisional`, and kept for later re-evaluation — this is not "grade 3 doesn't exist," it's "grade 3 doesn't count yet."
 - A `provisional` claim is never treated as grade 3 anywhere in this document. It does not satisfy a stop condition (§5), does not justify a budget or credit extension (§4), and does not count toward `same_failure_confirmations` or a resume trigger (§4, §10).
@@ -341,7 +426,87 @@ Real optimization routinely treats cost, time, risk, and quality as separate obj
 
 The classifier that assigns a task class runs before the budget is allocated, and the class is recorded in the lineage so a run cannot quietly re-classify itself upward mid-flight.
 
-Accurate statement of where this stands: **resources and opportunity cost are defined; the utility function and allocation policy are not yet.**
+### Classification — resolved
+
+Classification runs **per task unit the Head dispatches**, not once per conversation — a single user request can span multiple classes across its dispatched tasks.
+
+Decision rule, checked in this order; first match wins:
+
+```text
+1. external send · delete · deploy · payment · permission change · any irreversible execution
+     -> high_risk_action
+
+2. repository/config/document write, build, test run
+     -> code_change
+
+3. multi-source investigation, cause-unknown debugging, design exploration
+     -> investigation
+
+4. everything else — read, summarize, simple answer
+     -> simple_query
+```
+
+A task spanning two classes (a code change that also deploys) takes the higher-priority match — `high_risk_action` in that example. Ambiguous cases round up to `investigation`, never down to `simple_query` or `code_change`.
+
+**Frozen at lineage start.** Classification is fixed when a `lineage_id` opens and recorded there. The Head cannot reclassify a lineage upward mid-flight to unlock a larger budget — this is the classifier making that structural, not a policy the Head is asked to follow. A genuine change in what the task actually is opens a new lineage (or splits into two) rather than reclassifying the existing one, the same "explicit event, not self-declared judgment" rule §4 applies to credit restoration.
+
+### v0.1 budgets — resolved
+
+Absolute hard caps, not usage targets. `tokens` is total model input+output tokens for the lineage; `cost` is metered API cost; `time` is wall-clock.
+
+| Task class | Tokens | Time | Cost | Tool calls | Strategy switches |
+| --- | --: | --: | --: | --: | --: |
+| `simple_query` | 8,000 | 45s | $0.15 | 4 | 1 |
+| `code_change` | 64,000 | 15m | $2.00 | 40 | 2 |
+| `investigation` | 96,000 | 25m | $3.00 | 30 | 4 |
+| `high_risk_action` | 32,000 | 10m | $1.50 | 15 | 1 |
+
+`strategy_switch_count`'s per-class cap (1/2/4/1) answers directly: it is a **fixed limit per task class**, not derived from remaining budget.
+
+`high_risk_action`'s low compute numbers are deliberate — for that class, compute is not the binding constraint. Three conditions gate execution regardless of remaining budget, and PolicyGate needs no config flag of its own here because it already gates by tool absence, not a runtime check the Head can pass or fail:
+
+```text
+Grade 2 verification + explicit approval + PolicyGate pass
+```
+
+If any one is missing, the task does not execute even with budget remaining.
+
+```yaml
+task_budgets:
+  simple_query:
+    max_tokens: 8000
+    max_wall_seconds: 45
+    max_cost_usd: 0.15
+    max_tool_calls: 4
+    max_strategy_switches: 1
+
+  code_change:
+    max_tokens: 64000
+    max_wall_seconds: 900
+    max_cost_usd: 2.00
+    max_tool_calls: 40
+    max_strategy_switches: 2
+
+  investigation:
+    max_tokens: 96000
+    max_wall_seconds: 1500
+    max_cost_usd: 3.00
+    max_tool_calls: 30
+    max_strategy_switches: 4
+
+  high_risk_action:
+    max_tokens: 32000
+    max_wall_seconds: 600
+    max_cost_usd: 1.50
+    max_tool_calls: 15
+    max_strategy_switches: 1
+    requires_grade_2: true
+    requires_approval: true
+```
+
+These are v0.1 defaults, not placeholders left unset — but not final either. Success rate, early-stop rate, and average cost from operating logs are what tune them, the same way logs are what tune the 0.2/0.5/0.8 credit weights (§4) and the 2/3.0 stop thresholds (§5).
+
+Concrete allocation policy for v0.1 is set above. A genuine cross-dimension utility function — trading tokens against time against risk on one unified scale — is still not defined, and does not need to be for hard per-dimension caps to work.
 
 ## 10. Local Stop vs Global Stop
 
@@ -470,11 +635,7 @@ Returning raw claims rather than grades also resolves a tension with bounded con
 
 What remains open is parameter and operating policy, not structure.
 
-- Actual per-dimension numbers for each task-class budget profile (§9), and how a task is classified in the first place.
-- Whether `strategy_switch_count` is a fixed limit per task class or derived from the remaining budget.
-- Concrete schema for the `core_assumption_ids` registry — how an assumption is named, deduplicated, and retired. Same open item blocks the `preregistered_claim_id` registry that Grade 3 needs (§6).
 - Whether the §6 strong/weak axis enum (now fixed: `source_lineage`/`data_partition`/`verification_method`/`toolchain` vs `model_provider`/`prompt_context`/`sampling_path`/`evaluator_instance`) needs more axes once real operating logs show independence failures the current eight don't cover. The list is fixed to close the free-description loophole, not because it's assumed complete.
-- The value of `max_cumulative_credit_per_method_lineage` (§4). The rule is settled; the number waits on operating logs.
 
 ## References
 
